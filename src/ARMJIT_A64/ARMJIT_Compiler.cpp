@@ -83,7 +83,6 @@ Compiler::Compiler()
     JitMemUseableSize = JitMemSize;
     Reset();
 #else
-    #else
     u64 pageSize = sysconf(_SC_PAGE_SIZE);
     u8* pageAligned = (u8*)(((u64)JitMem & ~(pageSize - 1)) + pageSize);
     u64 alignedSize = (((u64)JitMem + sizeof(JitMem)) & ~(pageSize - 1)) - (u64)pageAligned;
@@ -357,7 +356,8 @@ const Compiler::CompileFunc A_Comp[ARMInstrInfo::ak_Count] =
     // Branch
     F(BranchImm), F(BranchImm), F(BranchImm), F(BranchXchangeReg), F(BranchXchangeReg),
     // Special
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    F(Nop)
 };
 #undef F
 #define F(x) &Compiler::T_Comp_##x
