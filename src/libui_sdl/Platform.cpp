@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <SDL2/SDL.h>
+//#include <SDL2/SDL.h>
 #include "../Platform.h"
 #include "PlatformConfig.h"
 #include "LAN_Socket.h"
@@ -38,7 +38,7 @@
 	#define socket_t    SOCKET
 	#define sockaddr_t  SOCKADDR
 #else
-    #include <glib.h>
+//    #include <glib.h>
 	#include <unistd.h>
 	#include <arpa/inet.h>
 	#include <netinet/in.h>
@@ -65,7 +65,7 @@ namespace Platform
 
 typedef struct
 {
-    SDL_Thread* ID;
+    void* ID;
     void (*Func)();
 
 } ThreadData;
@@ -236,14 +236,14 @@ FILE* OpenLocalFile(const char* path, const char* mode)
 
 #else
 
-    if (!relpath)
-    {
-        // Now check XDG_CONFIG_HOME
-        // TODO: check for memory leak there
-        std::string fullpath = std::string(g_get_user_config_dir()) + "/melonds/" + path;
-        f = OpenFile(fullpath.c_str(), mode, true);
-        if (f) { delete[] emudirpath; return f; }
-    }
+//    if (!relpath)
+//    {
+//        // Now check XDG_CONFIG_HOME
+//        // TODO: check for memory leak there
+//        std::string fullpath = std::string(g_get_user_config_dir()) + "/melonds/" + path;
+//        f = OpenFile(fullpath.c_str(), mode, true);
+//        if (f) { delete[] emudirpath; return f; }
+//    }
 
 #endif
 
@@ -262,7 +262,7 @@ void* Thread_Create(void (*func)())
 {
     ThreadData* data = new ThreadData;
     data->Func = func;
-    data->ID = SDL_CreateThread(ThreadEntry, "melonDS core thread", data);
+//    data->ID = SDL_CreateThread(ThreadEntry, "melonDS core thread", data);
     return data;
 }
 
@@ -273,39 +273,39 @@ void Thread_Free(void* thread)
 
 void Thread_Wait(void* thread)
 {
-    SDL_WaitThread((SDL_Thread*)((ThreadData*)thread)->ID, NULL);
+//    SDL_WaitThread((SDL_Thread*)((ThreadData*)thread)->ID, NULL);
 }
 
 
 void* Semaphore_Create()
 {
-    return SDL_CreateSemaphore(0);
+    return NULL;//SDL_CreateSemaphore(0);
 }
 
 void Semaphore_Free(void* sema)
 {
-    SDL_DestroySemaphore((SDL_sem*)sema);
+//    SDL_DestroySemaphore((SDL_sem*)sema);
 }
 
 void Semaphore_Reset(void* sema)
 {
-    while (SDL_SemTryWait((SDL_sem*)sema) == 0);
+//    while (SDL_SemTryWait((SDL_sem*)sema) == 0);
 }
 
 void Semaphore_Wait(void* sema)
 {
-    SDL_SemWait((SDL_sem*)sema);
+//    SDL_SemWait((SDL_sem*)sema);
 }
 
 void Semaphore_Post(void* sema)
 {
-    SDL_SemPost((SDL_sem*)sema);
+//    SDL_SemPost((SDL_sem*)sema);
 }
 
 
 void* GL_GetProcAddress(const char* proc)
 {
-    return uiGLGetProcAddress(proc);
+    return NULL;
 }
 
 

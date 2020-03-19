@@ -20,12 +20,12 @@
 
 
 
-DO_PROCLIST(DECLPROC);
+//DO_PROCLIST(DECLPROC);
 
 
 bool OpenGL_Init()
 {
-    DO_PROCLIST(LOADPROC);
+//    DO_PROCLIST(LOADPROC);
 
     return true;
 }
@@ -43,6 +43,8 @@ bool OpenGL_BuildShaderProgram(const char* vs, const char* fs, GLuint* ids, cons
     glGetShaderiv(ids[0], GL_COMPILE_STATUS, &res);
     if (res != GL_TRUE)
     {
+        GLenum error = glGetError();
+        
         glGetShaderiv(ids[0], GL_INFO_LOG_LENGTH, &res);
         if (res < 1) res = 1024;
         char* log = new char[res+1];

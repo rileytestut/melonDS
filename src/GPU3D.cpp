@@ -278,7 +278,7 @@ bool Init()
 
     CmdStallQueue = new FIFO<CmdFIFOEntry>(64);
 
-    Renderer = -1;
+    Renderer = 0;
     // SetRenderer() will be called to set it up later
 
     return true;

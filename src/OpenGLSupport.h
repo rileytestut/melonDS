@@ -21,8 +21,8 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include <OpenGLES/ES3/gl.h>
+#include <OpenGLES/ES3/glext.h>
 
 #include "Platform.h"
 
@@ -122,7 +122,7 @@
     func(GLGETSTRINGI, glGetStringi); \
 
 
-DO_PROCLIST(DECLPROC_EXT);
+//DO_PROCLIST(DECLPROC_EXT);
 
 
 bool OpenGL_Init();

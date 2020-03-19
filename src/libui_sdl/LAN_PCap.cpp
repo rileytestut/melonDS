@@ -21,8 +21,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <SDL2/SDL.h>
-#include <pcap/pcap.h>
+//#include <SDL2/SDL.h>
+//#include <pcap/pcap.h>
 #include "../Wifi.h"
 #include "LAN_PCap.h"
 #include "PlatformConfig.h"
@@ -33,7 +33,7 @@
 	#include <sys/types.h>
 	#include <ifaddrs.h>
 	#include <netinet/in.h>
-	#include <linux/if_packet.h>
+//	#include <linux/if_packet.h>
 #endif
 
 
@@ -48,14 +48,14 @@
     type_##name ptr_##name = NULL; \
     ret name args { return ptr_##name args2; }
 
-DECL_PCAP_FUNC(int, pcap_findalldevs, (pcap_if_t** alldevs, char* errbuf), (alldevs,errbuf))
-DECL_PCAP_FUNC(void, pcap_freealldevs, (pcap_if_t* alldevs), (alldevs))
-DECL_PCAP_FUNC(pcap_t*, pcap_open_live, (const char* src, int snaplen, int flags, int readtimeout, char* errbuf), (src,snaplen,flags,readtimeout,errbuf))
-DECL_PCAP_FUNC(void, pcap_close, (pcap_t* dev), (dev))
-DECL_PCAP_FUNC(int, pcap_setnonblock, (pcap_t* dev, int nonblock, char* errbuf), (dev,nonblock,errbuf))
-DECL_PCAP_FUNC(int, pcap_sendpacket, (pcap_t* dev, const u_char* data, int len), (dev,data,len))
-DECL_PCAP_FUNC(int, pcap_dispatch, (pcap_t* dev, int num, pcap_handler callback, u_char* data), (dev,num,callback,data))
-DECL_PCAP_FUNC(const u_char*, pcap_next, (pcap_t* dev, struct pcap_pkthdr* hdr), (dev,hdr))
+//DECL_PCAP_FUNC(int, pcap_findalldevs, (pcap_if_t** alldevs, char* errbuf), (alldevs,errbuf))
+//DECL_PCAP_FUNC(void, pcap_freealldevs, (pcap_if_t* alldevs), (alldevs))
+//DECL_PCAP_FUNC(pcap_t*, pcap_open_live, (const char* src, int snaplen, int flags, int readtimeout, char* errbuf), (src,snaplen,flags,readtimeout,errbuf))
+//DECL_PCAP_FUNC(void, pcap_close, (pcap_t* dev), (dev))
+//DECL_PCAP_FUNC(int, pcap_setnonblock, (pcap_t* dev, int nonblock, char* errbuf), (dev,nonblock,errbuf))
+//DECL_PCAP_FUNC(int, pcap_sendpacket, (pcap_t* dev, const u_char* data, int len), (dev,data,len))
+//DECL_PCAP_FUNC(int, pcap_dispatch, (pcap_t* dev, int num, pcap_handler callback, u_char* data), (dev,num,callback,data))
+//DECL_PCAP_FUNC(const u_char*, pcap_next, (pcap_t* dev, struct pcap_pkthdr* hdr), (dev,hdr))
 
 
 namespace LAN_PCap
@@ -78,7 +78,7 @@ AdapterData* Adapters = NULL;
 int NumAdapters = 0;
 
 void* PCapLib = NULL;
-pcap_t* PCapAdapter = NULL;
+//pcap_t* PCapAdapter = NULL;
 AdapterData* PCapAdapterData;
 
 u8 PacketBuffer[2048];
@@ -92,14 +92,14 @@ volatile int RXNum;
 
 bool TryLoadPCap(void* lib)
 {
-    LOAD_PCAP_FUNC(pcap_findalldevs)
-    LOAD_PCAP_FUNC(pcap_freealldevs)
-    LOAD_PCAP_FUNC(pcap_open_live)
-    LOAD_PCAP_FUNC(pcap_close)
-    LOAD_PCAP_FUNC(pcap_setnonblock)
-    LOAD_PCAP_FUNC(pcap_sendpacket)
-    LOAD_PCAP_FUNC(pcap_dispatch)
-    LOAD_PCAP_FUNC(pcap_next)
+//    LOAD_PCAP_FUNC(pcap_findalldevs)
+//    LOAD_PCAP_FUNC(pcap_freealldevs)
+//    LOAD_PCAP_FUNC(pcap_open_live)
+//    LOAD_PCAP_FUNC(pcap_close)
+//    LOAD_PCAP_FUNC(pcap_setnonblock)
+//    LOAD_PCAP_FUNC(pcap_sendpacket)
+//    LOAD_PCAP_FUNC(pcap_dispatch)
+//    LOAD_PCAP_FUNC(pcap_next)
 
     return true;
 }
@@ -113,18 +113,18 @@ bool Init(bool open_adapter)
 
         for (int i = 0; PCapLibNames[i]; i++)
         {
-            void* lib = SDL_LoadObject(PCapLibNames[i]);
-            if (!lib) continue;
-
-            if (!TryLoadPCap(lib))
-            {
-                SDL_UnloadObject(lib);
-                continue;
-            }
-
-            printf("PCap: lib %s, init successful\n", PCapLibNames[i]);
-            PCapLib = lib;
-            break;
+//            void* lib = SDL_LoadObject(PCapLibNames[i]);
+//            if (!lib) continue;
+//
+//            if (!TryLoadPCap(lib))
+//            {
+////                SDL_UnloadObject(lib);
+//                continue;
+//            }
+//
+//            printf("PCap: lib %s, init successful\n", PCapLibNames[i]);
+//            PCapLib = lib;
+//            break;
         }
 
         if (PCapLib == NULL)
@@ -134,52 +134,52 @@ bool Init(bool open_adapter)
         }
     }
     
-    PCapAdapter = NULL;
+//    PCapAdapter = NULL;
     PacketLen = 0;
     RXNum = 0;
 
     NumAdapters = 0;
 
-    char errbuf[PCAP_ERRBUF_SIZE];
+//    char errbuf[PCAP_ERRBUF_SIZE];
     int ret;
 
-    pcap_if_t* alldevs;
-    ret = pcap_findalldevs(&alldevs, errbuf);
-    if (ret < 0 || alldevs == NULL)
-    {
-        printf("PCap: no devices available\n");
-        return false;
-    }
+////    pcap_if_t* alldevs;
+//    ret = pcap_findalldevs(&alldevs, errbuf);
+//    if (ret < 0 || alldevs == NULL)
+//    {
+//        printf("PCap: no devices available\n");
+//        return false;
+//    }
+//
+////    pcap_if_t* dev = alldevs;
+//    while (dev) { NumAdapters++; dev = dev->next; }
 
-    pcap_if_t* dev = alldevs;
-    while (dev) { NumAdapters++; dev = dev->next; }
-
-    Adapters = new AdapterData[NumAdapters];
-    memset(Adapters, 0, sizeof(AdapterData)*NumAdapters);
-
-    AdapterData* adata = &Adapters[0];
-    dev = alldevs;
-    while (dev)
-    {
-        adata->Internal = dev;
-
-#ifdef __WIN32__
-        // hax
-        int len = strlen(dev->name);
-        len -= 12; if (len > 127) len = 127;
-        strncpy(adata->DeviceName, &dev->name[12], len);
-        adata->DeviceName[len] = '\0';
-#else
-        strncpy(adata->DeviceName, dev->name, 127);
-        adata->DeviceName[127] = '\0';
-        
-        strncpy(adata->FriendlyName, adata->DeviceName, 127);
-        adata->FriendlyName[127] = '\0';
-#endif // __WIN32__
-
-        dev = dev->next;
-        adata++;
-    }
+//    Adapters = new AdapterData[NumAdapters];
+//    memset(Adapters, 0, sizeof(AdapterData)*NumAdapters);
+//
+//    AdapterData* adata = &Adapters[0];
+//    dev = alldevs;
+//    while (dev)
+//    {
+//        adata->Internal = dev;
+//
+//#ifdef __WIN32__
+//        // hax
+//        int len = strlen(dev->name);
+//        len -= 12; if (len > 127) len = 127;
+//        strncpy(adata->DeviceName, &dev->name[12], len);
+//        adata->DeviceName[len] = '\0';
+//#else
+//        strncpy(adata->DeviceName, dev->name, 127);
+//        adata->DeviceName[127] = '\0';
+//
+//        strncpy(adata->FriendlyName, adata->DeviceName, 127);
+//        adata->FriendlyName[127] = '\0';
+//#endif // __WIN32__
+//
+//        dev = dev->next;
+//        adata++;
+//    }
 
 #ifdef __WIN32__
 
@@ -253,31 +253,31 @@ bool Init(bool open_adapter)
     
     for (int i = 0; i < NumAdapters; i++)
     {
-        adata = &Adapters[i];
+//        adata = &Adapters[i];
         struct ifaddrs* curaddr = addrs;
         while (curaddr)
         {
-            if (strcmp(curaddr->ifa_name, adata->DeviceName))
-            {
-                curaddr = curaddr->ifa_next;
-                continue;
-            }
-            if (!curaddr->ifa_addr) continue;
-            
-            u16 af = curaddr->ifa_addr->sa_family;
-            if (af == AF_INET)
-            {
-                struct sockaddr_in* sa = (sockaddr_in*)curaddr->ifa_addr;
-                memcpy(adata->IP_v4, &sa->sin_addr, 4);
-            }
-            else if (af == AF_PACKET)
-            {
-                struct sockaddr_ll* sa = (sockaddr_ll*)curaddr->ifa_addr;
-                if (sa->sll_halen != 6) 
-                    printf("weird MAC length %d for %s\n", sa->sll_halen, curaddr->ifa_name);
-                else
-                    memcpy(adata->MAC, sa->sll_addr, 6);
-            }
+//            if (strcmp(curaddr->ifa_name, adata->DeviceName))
+//            {
+//                curaddr = curaddr->ifa_next;
+//                continue;
+//            }
+//            if (!curaddr->ifa_addr) continue;
+//
+//            u16 af = curaddr->ifa_addr->sa_family;
+//            if (af == AF_INET)
+//            {
+//                struct sockaddr_in* sa = (sockaddr_in*)curaddr->ifa_addr;
+//                memcpy(adata->IP_v4, &sa->sin_addr, 4);
+//            }
+//            else if (af == AF_PACKET)
+//            {
+//                struct sockaddr_ll* sa = (sockaddr_ll*)curaddr->ifa_addr;
+//                if (sa->sll_halen != 6)
+//                    printf("weird MAC length %d for %s\n", sa->sll_halen, curaddr->ifa_name);
+//                else
+//                    memcpy(adata->MAC, sa->sll_addr, 6);
+//            }
             
             curaddr = curaddr->ifa_next;
         }
@@ -288,7 +288,7 @@ bool Init(bool open_adapter)
 #endif // __WIN32__
 
     if (!open_adapter) return true;
-    if (PCapAdapter) pcap_close(PCapAdapter);
+//    if (PCapAdapter) pcap_close(PCapAdapter);
     
     // open pcap device
     PCapAdapterData = &Adapters[0];
@@ -297,85 +297,88 @@ bool Init(bool open_adapter)
         if (!strncmp(Adapters[i].DeviceName, Config::LANDevice, 128))
             PCapAdapterData = &Adapters[i];
     }
-
-    dev = (pcap_if_t*)PCapAdapterData->Internal;
-    PCapAdapter = pcap_open_live(dev->name, 2048, PCAP_OPENFLAG_PROMISCUOUS, 1, errbuf);
-    if (!PCapAdapter)
-    {
-        printf("PCap: failed to open adapter %s\n", errbuf);
-        return false;
-    }
-
-    pcap_freealldevs(alldevs);
-
-    if (pcap_setnonblock(PCapAdapter, 1, errbuf) < 0)
-    {
-        printf("PCap: failed to set nonblocking mode\n");
-        pcap_close(PCapAdapter); PCapAdapter = NULL;
-        return false;
-    }
+//
+//    dev = (pcap_if_t*)PCapAdapterData->Internal;
+//    PCapAdapter = pcap_open_live(dev->name, 2048, PCAP_OPENFLAG_PROMISCUOUS, 1, errbuf);
+//    if (!PCapAdapter)
+//    {
+//        printf("PCap: failed to open adapter %s\n", errbuf);
+//        return false;
+//    }
+//
+//    pcap_freealldevs(alldevs);
+//
+//    if (pcap_setnonblock(PCapAdapter, 1, errbuf) < 0)
+//    {
+//        printf("PCap: failed to set nonblocking mode\n");
+//        pcap_close(PCapAdapter); PCapAdapter = NULL;
+//        return false;
+//    }
 
     return true;
 }
 
 void DeInit()
 {
-    if (PCapLib)
-    {
-        if (PCapAdapter)
-        {
-            pcap_close(PCapAdapter);
-            PCapAdapter = NULL;
-        }
-
-        SDL_UnloadObject(PCapLib);
-        PCapLib = NULL;
-    }
+//    if (PCapLib)
+//    {
+//        if (PCapAdapter)
+//        {
+//            pcap_close(PCapAdapter);
+//            PCapAdapter = NULL;
+//        }
+//
+//        SDL_UnloadObject(PCapLib);
+//        PCapLib = NULL;
+//    }
 }
 
 
 void RXCallback(u_char* blarg, const struct pcap_pkthdr* header, const u_char* data)
 {
-    while (RXNum > 0);
-
-    if (header->len > 2048-64) return;
-
-    PacketLen = header->len;
-    memcpy(PacketBuffer, data, PacketLen);
-    RXNum = 1;
+//    while (RXNum > 0);
+//
+//    if (header->len > 2048-64) return;
+//
+//    PacketLen = header->len;
+//    memcpy(PacketBuffer, data, PacketLen);
+//    RXNum = 1;
 }
 
 int SendPacket(u8* data, int len)
 {
-    if (PCapAdapter == NULL)
-        return 0;
-
-    if (len > 2048)
-    {
-        printf("LAN_SendPacket: error: packet too long (%d)\n", len);
-        return 0;
-    }
-
-    pcap_sendpacket(PCapAdapter, data, len);
-    // TODO: check success
-    return len;
+    return 0;
+//    if (PCapAdapter == NULL)
+//        return 0;
+//
+//    if (len > 2048)
+//    {
+//        printf("LAN_SendPacket: error: packet too long (%d)\n", len);
+//        return 0;
+//    }
+//
+//    pcap_sendpacket(PCapAdapter, data, len);
+//    // TODO: check success
+//    return len;
 }
 
 int RecvPacket(u8* data)
 {
-    if (PCapAdapter == NULL)
-        return 0;
-
-    int ret = 0;
-    if (RXNum > 0)
-    {
-        memcpy(data, PacketBuffer, PacketLen);
-        ret = PacketLen;
-        RXNum = 0;
-    }
-
-    pcap_dispatch(PCapAdapter, 1, RXCallback, NULL);
-    return ret;
+    return 0;
+//
+//    if (PCapAdapter == NULL)
+//        return 0;
+//
+//    int ret = 0;
+//    if (RXNum > 0)
+//    {
+//        memcpy(data, PacketBuffer, PacketLen);
+//        ret = PacketLen;
+//        RXNum = 0;
+//    }
+//
+//    pcap_dispatch(PCapAdapter, 1, RXCallback, NULL);
+//    return ret;
 }
 
 }
