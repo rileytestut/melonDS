@@ -1,8 +1,25 @@
+/*
+    Copyright 2016-2022 melonDS team, RSDuck
+
+    This file is part of melonDS.
+
+    melonDS is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with melonDS. If not, see http://www.gnu.org/licenses/.
+*/
+
 #include "ARMJIT_Compiler.h"
 
 #include "../ARMJIT_Internal.h"
 #include "../ARMInterpreter.h"
-#include "../Config.h"
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -40,9 +57,14 @@ namespace ARMJIT
 
 template <>
 const ARM64Reg RegisterCache<Compiler, ARM64Reg>::NativeRegAllocOrder[] =
-    {W19, W20, W21, W22, W23, W24, W25, W26};
+{
+    W19, W20, W21, W22, W23, W24, W25,
+    W8, W9, W10, W11, W12, W13, W14, W15
+};
 template <>
-const int RegisterCache<Compiler, ARM64Reg>::NativeRegsAvailable = 8;
+const int RegisterCache<Compiler, ARM64Reg>::NativeRegsAvailable = 15;
+
+const BitSet32 CallerSavedPushRegs({W8, W9, W10, W11, W12, W13, W14, W15});
 
 const int JitMemSize = 16 * 1024 * 1024;
 #ifndef __SWITCH__
@@ -146,42 +168,56 @@ void Compiler::A_Comp_MSR()
             MOV(W2, RCPSR);
             MOV(X0, RCPU);
 
-            PushRegs(true);
-
-            QuickCallFunction(X3, (void*)&UpdateModeTrampoline);
-        
-            PopRegs(true);
+            PushRegs(true, true);
+            QuickCallFunction(X3, UpdateModeTrampoline);
+            PopRegs(true, true);
         }
     }
 }
 
-void Compiler::PushRegs(bool saveHiRegs)
+
+void Compiler::PushRegs(bool saveHiRegs, bool saveRegsToBeChanged, bool allowUnload)
 {
+    BitSet32 loadedRegs(RegCache.LoadedRegs);
+
     if (saveHiRegs)
     {
-        if (Thumb || CurInstr.Cond() == 0xE)
+        BitSet32 hiRegsLoaded(RegCache.LoadedRegs & 0x7F00);
+        for (int reg : hiRegsLoaded)
         {
-            BitSet16 hiRegsLoaded(RegCache.LoadedRegs & 0x7F00);
-            for (int reg : hiRegsLoaded)
+            if (Thumb || CurInstr.Cond() == 0xE)
                 RegCache.UnloadRegister(reg);
+            else
+                SaveReg(reg, RegCache.Mapping[reg]);
+            // prevent saving the register twice
+            loadedRegs[reg] = false;
         }
-        else
+    }
+
+    for (int reg : loadedRegs)
+    {
+        if (CallerSavedPushRegs[RegCache.Mapping[reg]]
+            && (saveRegsToBeChanged || !((1<<reg) & CurInstr.Info.DstRegs && !((1<<reg) & CurInstr.Info.SrcRegs))))
         {
-            BitSet16 hiRegsDirty(RegCache.LoadedRegs & 0x7F00);
-            for (int reg : hiRegsDirty)
+            if ((Thumb || CurInstr.Cond() == 0xE) && !((1 << reg) & (CurInstr.Info.DstRegs|CurInstr.Info.SrcRegs)) && allowUnload)
+                RegCache.UnloadRegister(reg);
+            else
                 SaveReg(reg, RegCache.Mapping[reg]);
         }
     }
 }
 
-void Compiler::PopRegs(bool saveHiRegs)
+void Compiler::PopRegs(bool saveHiRegs, bool saveRegsToBeChanged)
 {
-    if (saveHiRegs)
+    BitSet32 loadedRegs(RegCache.LoadedRegs);
+    for (int reg : loadedRegs)
     {
-        BitSet16 hiRegsLoaded(RegCache.LoadedRegs & 0x7F00);
-
-        for (int reg : hiRegsLoaded)
+        if ((saveHiRegs && reg >= 8 && reg < 15)
+            || (CallerSavedPushRegs[RegCache.Mapping[reg]]
+                && (saveRegsToBeChanged || !((1<<reg) & CurInstr.Info.DstRegs && !((1<<reg) & CurInstr.Info.SrcRegs)))))
+        {
             LoadReg(reg, RegCache.Mapping[reg]);
+        }
     }
 }
 
@@ -191,7 +227,8 @@ Compiler::Compiler()
     JitRWBase = aligned_alloc(0x1000, JitMemSize);
 
     JitRXStart = (u8*)&__start__ - JitMemSize - 0x1000;
-    JitRWStart = virtmemReserve(JitMemSize);
+    virtmemLock();
+    JitRWStart = virtmemFindAslr(JitMemSize, 0x1000);
     MemoryInfo info = {0};
     u32 pageInfo = {0};
     int i = 0;
@@ -218,6 +255,8 @@ Compiler::Compiler()
     succeded = R_SUCCEEDED(svcMapProcessMemory(JitRWStart, envGetOwnProcessHandle(), (u64)JitRXStart, JitMemSize));
     assert(succeded);
 
+    virtmemUnlock();
+
     SetCodeBase((u8*)JitRWStart, (u8*)JitRXStart);
     JitMemMainSize = JitMemSize;
 #elif defined(__APPLE__) && TARGET_OS_IPHONE
@@ -243,7 +282,12 @@ Compiler::Compiler()
     u64 pageSize = sysconf(_SC_PAGE_SIZE);
     u8* pageAligned = (u8*)(((u64)JitMem & ~(pageSize - 1)) + pageSize);
     u64 alignedSize = (((u64)JitMem + sizeof(JitMem)) & ~(pageSize - 1)) - (u64)pageAligned;
-    mprotect(pageAligned, alignedSize, PROT_EXEC | PROT_READ | PROT_WRITE);
+    #ifdef __APPLE__
+        pageAligned = (u8*)mmap(NULL, 1024*1024*16, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT,-1, 0);
+        JitEnableWrite();
+    #else
+        mprotect(pageAligned, alignedSize, PROT_EXEC | PROT_READ | PROT_WRITE);
+    #endif
 
     SetCodeBase(pageAligned, pageAligned);
     JitMemMainSize = alignedSize;
@@ -257,6 +301,7 @@ Compiler::Compiler()
     }
 
     /*
+        W4 - whether the register was written to
         W5 - mode
         W1 - reg num
         W3 - in/out value of reg
@@ -346,9 +391,11 @@ Compiler::Compiler()
         {
             for (int size = 0; size < 3; size++)
             {
-                for (int reg = 0; reg < 8; reg++)
+                for (int reg = 0; reg < 32; reg++)
                 {
-                    ARM64Reg rdMapped = (ARM64Reg)(W19 + reg);
+                    if (!(reg == W4 || (reg >= W8 && reg <= W15) || (reg >= W19 && reg <= W25)))
+                        continue;
+                    ARM64Reg rdMapped = (ARM64Reg)reg;
                     PatchedStoreFuncs[consoleType][num][size][reg] = GetRXPtr();
                     if (num == 0)
                     {
@@ -359,7 +406,7 @@ Compiler::Compiler()
                     {
                         MOV(W1, rdMapped);
                     }
-                    ABI_PushRegisters({30});
+                    ABI_PushRegisters(BitSet32({30}) | CallerSavedPushRegs);
                     if (consoleType == 0)
                     {
                         switch ((8 << size) |  num)
@@ -385,7 +432,7 @@ Compiler::Compiler()
                         }
                     }
                     
-                    ABI_PopRegisters({30});
+                    ABI_PopRegisters(BitSet32({30}) | CallerSavedPushRegs);
                     RET();
 
                     for (int signextend = 0; signextend < 2; signextend++)
@@ -393,7 +440,7 @@ Compiler::Compiler()
                         PatchedLoadFuncs[consoleType][num][size][signextend][reg] = GetRXPtr();
                         if (num == 0)
                             MOV(X1, RCPU);
-                        ABI_PushRegisters({30});
+                        ABI_PushRegisters(BitSet32({30}) | CallerSavedPushRegs);
                         if (consoleType == 0)
                         {
                             switch ((8 << size) |  num)
@@ -418,7 +465,7 @@ Compiler::Compiler()
                             case 9: QuickCallFunction(X3, SlowRead7<u8, 1>); break;
                             }
                         }
-                        ABI_PopRegisters({30});
+                        ABI_PopRegisters(BitSet32({30}) | CallerSavedPushRegs);
                         if (size == 32)
                             MOV(rdMapped, W0);
                         else if (signextend)
@@ -449,7 +496,6 @@ Compiler::~Compiler()
     {
         bool succeded = R_SUCCEEDED(svcUnmapProcessMemory(JitRWStart, envGetOwnProcessHandle(), (u64)JitRXStart, JitMemSize));
         assert(succeded);
-        virtmemFree(JitRWStart, JitMemSize);
         succeded = R_SUCCEEDED(svcUnmapProcessCodeMemory(envGetOwnProcessHandle(), (u64)JitRXStart, (u64)JitRWBase, JitMemSize));
         assert(succeded);
         free(JitRWBase);
@@ -472,12 +518,12 @@ void Compiler::LoadReg(int reg, ARM64Reg nativeReg)
     if (reg == 15)
         MOVI2R(nativeReg, R15);
     else
-        LDR(INDEX_UNSIGNED, nativeReg, RCPU, offsetof(ARM, R[reg]));
+        LDR(INDEX_UNSIGNED, nativeReg, RCPU, offsetof(ARM, R) + reg*4);
 }
 
 void Compiler::SaveReg(int reg, ARM64Reg nativeReg)
 {
-    STR(INDEX_UNSIGNED, nativeReg, RCPU, offsetof(ARM, R[reg]));
+    STR(INDEX_UNSIGNED, nativeReg, RCPU, offsetof(ARM, R) + reg*4);
 }
 
 void Compiler::LoadCPSR()
@@ -657,12 +703,13 @@ void Compiler::Comp_BranchSpecialBehaviour(bool taken)
     {
         RegCache.PrepareExit();
 
-        ADD(RCycles, RCycles, ConstantCycles);
+        if (ConstantCycles)
+            ADD(RCycles, RCycles, ConstantCycles);
         QuickTailCall(X0, ARM_Ret);
     }
 }
 
-JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount)
+JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount, bool hasMemInstr)
 {
     if (JitMemMainSize - GetCodeOffset() < 1024 * 16)
     {
@@ -683,6 +730,9 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
     ConstantCycles = 0;
     RegCache = RegisterCache<Compiler, ARM64Reg>(this, instrs, instrsCount, true);
     CPSRDirty = false;
+
+    if (hasMemInstr)
+        MOVP2R(RMemBase, Num == 0 ? ARMJIT_Memory::FastMem9Start : ARMJIT_Memory::FastMem7Start);
 
     for (int i = 0; i < instrsCount; i++)
     {
@@ -732,7 +782,9 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                 QuickCallFunction(X1, InterpretTHUMB[CurInstr.Info.Kind]);
             }
             else
+            {
                 (this->*comp)();
+            }
         }
         else
         {
@@ -748,10 +800,12 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                 }
             }
             else if (cond == 0xF)
+            {
                 Comp_AddCycles_C();
+            }
             else
             {
-                IrregularCycles = false;
+                IrregularCycles = comp == NULL;
 
                 FixupBranch skipExecute;
                 if (cond < 0xE)
@@ -776,14 +830,17 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                         FixupBranch skipNop = B();
                         SetJumpTarget(skipExecute);
 
-                        Comp_AddCycles_C();
+                        if (IrregularCycles)
+                            Comp_AddCycles_C(true);
 
                         Comp_BranchSpecialBehaviour(false);
 
                         SetJumpTarget(skipNop);
                     }
                     else
+                    {
                         SetJumpTarget(skipExecute);
+                    }
                 }
 
             }
@@ -798,7 +855,8 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
 
     RegCache.Flush();
 
-    ADD(RCycles, RCycles, ConstantCycles);
+    if (ConstantCycles)
+        ADD(RCycles, RCycles, ConstantCycles);
     QuickTailCall(X0, ARM_Ret);
 
     FlushIcache();

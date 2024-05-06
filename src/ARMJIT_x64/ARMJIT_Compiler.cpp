@@ -1,9 +1,27 @@
+/*
+    Copyright 2016-2022 melonDS team
+
+    This file is part of melonDS.
+
+    melonDS is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with melonDS. If not, see http://www.gnu.org/licenses/.
+*/
+
 #include "ARMJIT_Compiler.h"
 
 #include "../ARMInterpreter.h"
-#include "../Config.h"
 
 #include <assert.h>
+#include <stdarg.h>
 
 #include "../dolphin/CommonFuncs.h"
 
@@ -46,7 +64,7 @@ const BitSet32 CallerSavedPushRegs({R10, R11});
 const BitSet32 CallerSavedPushRegs({R9, R10, R11});
 #endif
 
-void Compiler::PushRegs(bool saveHiRegs)
+void Compiler::PushRegs(bool saveHiRegs, bool saveRegsToBeChanged, bool allowUnload)
 {
     BitSet32 loadedRegs(RegCache.LoadedRegs);
 
@@ -65,17 +83,26 @@ void Compiler::PushRegs(bool saveHiRegs)
     }
 
     for (int reg : loadedRegs)
-        if (BitSet32(1 << RegCache.Mapping[reg]) & ABI_ALL_CALLER_SAVED)
-            SaveReg(reg, RegCache.Mapping[reg]);
+    {
+        if (CallerSavedPushRegs[RegCache.Mapping[reg]]
+            && (saveRegsToBeChanged || !((1<<reg) & CurInstr.Info.DstRegs && !((1<<reg) & CurInstr.Info.SrcRegs))))
+        {
+            if ((Thumb || CurInstr.Cond() == 0xE) && !((1 << reg) & (CurInstr.Info.DstRegs|CurInstr.Info.SrcRegs)) && allowUnload)
+                RegCache.UnloadRegister(reg);
+            else
+                SaveReg(reg, RegCache.Mapping[reg]);
+        }
+    }
 }
 
-void Compiler::PopRegs(bool saveHiRegs)
+void Compiler::PopRegs(bool saveHiRegs, bool saveRegsToBeChanged)
 {
     BitSet32 loadedRegs(RegCache.LoadedRegs);
     for (int reg : loadedRegs)
     {
         if ((saveHiRegs && reg >= 8 && reg < 15)
-            || BitSet32(1 << RegCache.Mapping[reg]) & ABI_ALL_CALLER_SAVED)
+            || (CallerSavedPushRegs[RegCache.Mapping[reg]]
+                && (saveRegsToBeChanged || !((1<<reg) & CurInstr.Info.DstRegs && !((1<<reg) & CurInstr.Info.SrcRegs)))))
         {
             LoadReg(reg, RegCache.Mapping[reg]);
         }
@@ -98,7 +125,9 @@ void Compiler::A_Comp_MRS()
         MOV(32, rd, R(RSCRATCH3));
     }
     else
+    {
         MOV(32, rd, R(RCPSR));
+    }
 }
 
 void UpdateModeTrampoline(ARM* arm, u32 oldmode, u32 newmode)
@@ -185,14 +214,14 @@ void Compiler::A_Comp_MSR()
             AND(32, R(RSCRATCH2), val);
             OR(32, R(RCPSR), R(RSCRATCH2));
 
-            PushRegs(true);
+            PushRegs(true, true);
 
             MOV(32, R(ABI_PARAM3), R(RCPSR));
             MOV(32, R(ABI_PARAM2), R(RSCRATCH3));
             MOV(64, R(ABI_PARAM1), R(RCPU));
             CALL((void*)&UpdateModeTrampoline);
 
-            PopRegs(true);
+            PopRegs(true, true);
         }
     }
 }
@@ -269,6 +298,10 @@ Compiler::Compiler()
         SetJumpTarget(und);
         MOV(32, R(RSCRATCH3), MComplex(RCPU, RSCRATCH2, SCALE_4, offsetof(ARM, R_UND)));
         RET();
+
+#ifdef JIT_PROFILING_ENABLED
+        CreateMethod("ReadBanked", ReadBanked);
+#endif
     }
     {
         // RSCRATCH  mode
@@ -312,6 +345,10 @@ Compiler::Compiler()
         MOV(32, MComplex(RCPU, RSCRATCH2, SCALE_4, offsetof(ARM, R_UND)), R(RSCRATCH3));
         CLC();
         RET();
+
+#ifdef JIT_PROFILING_ENABLED
+        CreateMethod("WriteBanked", WriteBanked);
+#endif
     }
 
     for (int consoleType = 0; consoleType < 2; consoleType++)
@@ -372,6 +409,10 @@ Compiler::Compiler()
                     ABI_PopRegistersAndAdjustStack(CallerSavedPushRegs, 8);
                     RET();
 
+#ifdef JIT_PROFILING_ENABLED
+                    CreateMethod("FastMemStorePatch%d_%d_%d", PatchedStoreFuncs[consoleType][num][size][reg], num, size, reg);
+#endif
+
                     for (int signextend = 0; signextend < 2; signextend++)
                     {
                         PatchedLoadFuncs[consoleType][num][size][signextend][reg] = GetWritableCodePtr();
@@ -410,6 +451,10 @@ Compiler::Compiler()
                         else
                             MOVZX(32, 8 << size, rdMapped, R(RSCRATCH));
                         RET();
+
+#ifdef JIT_PROFILING_ENABLED
+                        CreateMethod("FastMemLoadPatch%d_%d_%d_%d", PatchedLoadFuncs[consoleType][num][size][signextend][reg], num, size, reg, signextend);
+#endif
                     }
                 }
             }
@@ -447,14 +492,14 @@ void Compiler::SaveCPSR(bool flagClean)
 void Compiler::LoadReg(int reg, X64Reg nativeReg)
 {
     if (reg != 15)
-        MOV(32, R(nativeReg), MDisp(RCPU, offsetof(ARM, R[reg])));
+        MOV(32, R(nativeReg), MDisp(RCPU, offsetof(ARM, R) + reg*4));
     else
         MOV(32, R(nativeReg), Imm32(R15));
 }
 
 void Compiler::SaveReg(int reg, X64Reg nativeReg)
 {
-    MOV(32, MDisp(RCPU, offsetof(ARM, R[reg])), R(nativeReg));
+    MOV(32, MDisp(RCPU, offsetof(ARM, R) + reg*4), R(nativeReg));
 }
 
 // invalidates RSCRATCH and RSCRATCH3
@@ -592,11 +637,11 @@ const Compiler::CompileFunc T_Comp[ARMInstrInfo::tk_Count] = {
     // LDR/STR sp rel
     F(T_Comp_MemSPRel), F(T_Comp_MemSPRel),
     // PUSH/POP
-    F(T_Comp_PUSH_POP), F(T_Comp_PUSH_POP), 
+    F(T_Comp_PUSH_POP), F(T_Comp_PUSH_POP),
     // LDMIA, STMIA
-    F(T_Comp_LDMIA_STMIA), F(T_Comp_LDMIA_STMIA), 
+    F(T_Comp_LDMIA_STMIA), F(T_Comp_LDMIA_STMIA),
     // Branch
-    F(T_Comp_BCOND), F(T_Comp_BranchXchangeReg), F(T_Comp_BranchXchangeReg), F(T_Comp_B), F(T_Comp_BL_LONG_1), F(T_Comp_BL_LONG_2), 
+    F(T_Comp_BCOND), F(T_Comp_BranchXchangeReg), F(T_Comp_BranchXchangeReg), F(T_Comp_B), F(T_Comp_BL_LONG_1), F(T_Comp_BL_LONG_2),
     // Unk, SVC
     NULL, NULL,
     F(T_Comp_BL_Merged)
@@ -634,12 +679,35 @@ void Compiler::Comp_SpecialBranchBehaviour(bool taken)
     {
         RegCache.PrepareExit();
 
-        ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
+        if (ConstantCycles)
+            ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
         JMP((u8*)&ARM_Ret, true);
     }
 }
 
-JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount)
+#ifdef JIT_PROFILING_ENABLED
+void Compiler::CreateMethod(const char* namefmt, void* start, ...)
+{
+    if (iJIT_IsProfilingActive())
+    {
+        va_list args;
+        va_start(args, start);
+        char name[64];
+        vsprintf(name, namefmt, args);
+        va_end(args);
+
+        iJIT_Method_Load method = {0};
+        method.method_id = iJIT_GetNewMethodID();
+        method.method_name = name;
+        method.method_load_address = start;
+        method.method_size = GetWritableCodePtr() - (u8*)start;
+
+        iJIT_NotifyEvent(iJVM_EVENT_TYPE_METHOD_LOAD_FINISHED, (void*)&method);
+    }
+}
+#endif
+
+JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount, bool hasMemoryInstr)
 {
     if (NearSize - (GetCodePtr() - NearStart) < 1024 * 32) // guess...
     {
@@ -703,7 +771,9 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                 ABI_CallFunction(InterpretTHUMB[CurInstr.Info.Kind]);
             }
             else
+            {
                 (this->*comp)();
+            }
         }
         else
         {
@@ -724,7 +794,7 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
             }
             else
             {
-                IrregularCycles = false;
+                IrregularCycles = comp == NULL;
 
                 FixupBranch skipExecute;
                 if (cond < 0xE)
@@ -737,7 +807,9 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                     ABI_CallFunction(InterpretARM[CurInstr.Info.Kind]);
                 }
                 else
+                {
                     (this->*comp)();
+                }
 
                 Comp_SpecialBranchBehaviour(true);
 
@@ -755,9 +827,11 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
                         SetJumpTarget(skipFailed);
                     }
                     else
+                    {
                         SetJumpTarget(skipExecute);
+                    }
                 }
-                
+
             }
         }
 
@@ -767,8 +841,13 @@ JitBlockEntry Compiler::CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[]
 
     RegCache.Flush();
 
-    ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
+    if (ConstantCycles)
+        ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm32(ConstantCycles));
     JMP((u8*)ARM_Ret, true);
+
+#ifdef JIT_PROFILING_ENABLED
+    CreateMethod("JIT_Block_%d_%d_%08X", (void*)res, Num, Thumb, instrs[0].Addr);
+#endif
 
     /*FILE* codeout = fopen("codeout", "a");
     fprintf(codeout, "beginning block argargarg__ %x!!!", instrs[0].Addr);
@@ -808,7 +887,7 @@ void Compiler::Comp_AddCycles_CI(Gen::X64Reg i, int add)
     s32 cycles = Num ?
         NDS::ARM7MemTimings[CurInstr.CodeCycles][Thumb ? 0 : 2]
         : ((R15 & 0x2) ? 0 : CurInstr.CodeCycles);
-    
+
     if (!Thumb && CurInstr.Cond() < 0xE)
     {
         LEA(32, RSCRATCH, MDisp(i, add + cycles));
@@ -853,7 +932,7 @@ void Compiler::Comp_AddCycles_CDI()
         {
             cycles = numC + numD + 1;
         }
-        
+
         if (!Thumb && CurInstr.Cond() < 0xE)
             ADD(32, MDisp(RCPU, offsetof(ARM, Cycles)), Imm8(cycles));
         else

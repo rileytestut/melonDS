@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -19,6 +19,9 @@
 #ifndef DSI_SPI_TSC
 #define DSI_SPI_TSC
 
+#include "types.h"
+#include "Savestate.h"
+
 namespace DSi_SPI_TSC
 {
 
@@ -28,6 +31,9 @@ bool Init();
 void DeInit();
 void Reset();
 void DoSavestate(Savestate* file);
+
+// 00=DS-mode 01=normal
+void SetMode(u8 mode);
 
 void SetTouchCoords(u16 x, u16 y);
 void MicInputFrame(s16* data, int samples);

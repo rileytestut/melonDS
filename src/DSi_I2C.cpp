@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -22,6 +22,7 @@
 #include "DSi_I2C.h"
 #include "DSi_Camera.h"
 #include "ARM.h"
+#include "SPI.h"
 
 
 namespace DSi_BPTWL
@@ -72,6 +73,29 @@ void Reset()
     Registers[0x81] = 0x64;
 }
 
+void DoSavestate(Savestate* file)
+{
+    file->Section("I2BP");
+
+    file->VarArray(Registers, 0x100);
+    file->Var32(&CurPos);
+}
+
+u8 GetBootFlag() { return Registers[0x70]; }
+
+bool GetBatteryCharging() { return Registers[0x20] >> 7; }
+void SetBatteryCharging(bool charging)
+{
+    Registers[0x20] = (((charging ? 0x8 : 0x0) << 4) | (Registers[0x20] & 0x0F));
+}
+
+u8 GetBatteryLevel() { return Registers[0x20] & 0xF; }
+void SetBatteryLevel(u8 batteryLevel)
+{
+    Registers[0x20] = ((Registers[0x20] & 0xF0) | (batteryLevel & 0x0F));
+    SPI_Powerman::SetBatteryLevelOkay(batteryLevel > batteryLevel_Low ? true : false);
+}
+
 void Start()
 {
     //printf("BPTWL: start\n");
@@ -79,14 +103,15 @@ void Start()
 
 u8 Read(bool last)
 {
+    //printf("BPTWL: read %02X -> %02X @ %08X\n", CurPos, Registers[CurPos], NDS::GetPC(1));
+    u8 ret = Registers[CurPos++];
+
     if (last)
     {
         CurPos = -1;
-        return 0;
     }
 
-    //printf("BPTWL: read %02X -> %02X\n", CurPos, Registers[CurPos]);
-    return Registers[CurPos++];
+    return ret;
 }
 
 void Write(u8 val, bool last)
@@ -97,7 +122,7 @@ void Write(u8 val, bool last)
         return;
     }
 
-    if (CurPos == -1)
+    if (CurPos == 0xFFFFFFFF)
     {
         CurPos = val;
         //printf("BPTWL: reg=%02X\n", val);
@@ -144,7 +169,6 @@ u32 Device;
 bool Init()
 {
     if (!DSi_BPTWL::Init()) return false;
-    if (!DSi_Camera::Init()) return false;
 
     return true;
 }
@@ -152,7 +176,6 @@ bool Init()
 void DeInit()
 {
     DSi_BPTWL::DeInit();
-    DSi_Camera::DeInit();
 }
 
 void Reset()
@@ -163,12 +186,22 @@ void Reset()
     Device = -1;
 
     DSi_BPTWL::Reset();
-    DSi_Camera::Reset();
+}
+
+void DoSavestate(Savestate* file)
+{
+    file->Section("I2Ci");
+
+    file->Var8(&Cnt);
+    file->Var8(&Data);
+    file->Var32(&Device);
+
+    DSi_BPTWL::DoSavestate(file);
 }
 
 void WriteCnt(u8 val)
 {
-    //printf("I2C: write CNT %02X, %08X\n", val, NDS::GetPC(1));
+    //printf("I2C: write CNT %02X, %02X, %08X\n", val, Data, NDS::GetPC(1));
 
     // TODO: check ACK flag
     // TODO: transfer delay
@@ -187,8 +220,8 @@ void WriteCnt(u8 val)
             switch (Device)
             {
             case 0x4A: Data = DSi_BPTWL::Read(islast); break;
-            case 0x78: Data = DSi_Camera0->I2C_Read(islast); break;
-            case 0x7A: Data = DSi_Camera1->I2C_Read(islast); break;
+            case 0x78: Data = DSi_CamModule::Camera0->I2C_Read(islast); break;
+            case 0x7A: Data = DSi_CamModule::Camera1->I2C_Read(islast); break;
             case 0xA0:
             case 0xE0: Data = 0xFF; break;
             default:
@@ -213,8 +246,8 @@ void WriteCnt(u8 val)
                 switch (Device)
                 {
                 case 0x4A: DSi_BPTWL::Start(); break;
-                case 0x78: DSi_Camera0->I2C_Start(); break;
-                case 0x7A: DSi_Camera1->I2C_Start(); break;
+                case 0x78: DSi_CamModule::Camera0->I2C_Start(); break;
+                case 0x7A: DSi_CamModule::Camera1->I2C_Start(); break;
                 case 0xA0:
                 case 0xE0: ack = false; break;
                 default:
@@ -230,8 +263,8 @@ void WriteCnt(u8 val)
                 switch (Device)
                 {
                 case 0x4A: DSi_BPTWL::Write(Data, islast); break;
-                case 0x78: DSi_Camera0->I2C_Write(Data, islast); break;
-                case 0x7A: DSi_Camera1->I2C_Write(Data, islast); break;
+                case 0x78: DSi_CamModule::Camera0->I2C_Write(Data, islast); break;
+                case 0x7A: DSi_CamModule::Camera1->I2C_Write(Data, islast); break;
                 case 0xA0:
                 case 0xE0: ack = false; break;
                 default:

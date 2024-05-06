@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -20,6 +20,7 @@
 #define DSI_AES_H
 
 #include "types.h"
+#include "Savestate.h"
 
 namespace DSi_AES
 {
@@ -29,6 +30,8 @@ extern u32 Cnt;
 bool Init();
 void DeInit();
 void Reset();
+
+void DoSavestate(Savestate* file);
 
 u32 ReadCnt();
 void WriteCnt(u32 val);
@@ -46,8 +49,8 @@ void WriteKeyNormal(u32 slot, u32 offset, u32 val, u32 mask);
 void WriteKeyX(u32 slot, u32 offset, u32 val, u32 mask);
 void WriteKeyY(u32 slot, u32 offset, u32 val, u32 mask);
 
-void GetModcryptKey(u8* romheader, u8* key);
-void ApplyModcrypt(u8* data, u32 len, u8* key, u8* iv);
+void Swap16(u8* dst, u8* src);
+void DeriveNormalKey(u8* keyX, u8* keyY, u8* normalkey);
 
 }
 

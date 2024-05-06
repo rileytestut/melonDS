@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -22,6 +22,7 @@
 const char* kCompositorVS = R"(#version 140
 
 in vec2 vPosition;
+in vec2 vTexcoord;
 
 smooth out vec2 fTexcoord;
 
@@ -33,7 +34,7 @@ void main()
     fpos.w = 1.0;
 
     gl_Position = fpos;
-    fTexcoord = (vPosition + vec2(1.0, 1.0)) * (vec2(256.0, 384.0) / 2.0);
+    fTexcoord = vTexcoord;
 }
 )";
 
@@ -81,8 +82,7 @@ void main()
                 eva = (_3dpix.a & 0x1F) + 1;
                 evb = 32 - eva;
 
-                val1 = ((_3dpix * eva) + (val1 * evb)) >> 5;
-                if (eva <= 16) val1 += ivec4(1,1,1,0);
+                val1 = ((_3dpix * eva) + (val1 * evb) + 0x10) >> 5;
                 val1 = min(val1, 0x3F);
             }
             else
@@ -102,7 +102,7 @@ void main()
                 eva = val3.g;
                 evb = val3.b;
 
-                val1 = ((val1 * eva) + (_3dpix * evb)) >> 4;
+                val1 = ((val1 * eva) + (_3dpix * evb) + 0x8) >> 4;
                 val1 = min(val1, 0x3F);
             }
             else
@@ -122,8 +122,8 @@ void main()
                 evy = val3.g;
 
                 val1 = _3dpix;
-                if      (compmode == 2) val1 += ((ivec4(0x3F,0x3F,0x3F,0) - val1) * evy) >> 4;
-                else if (compmode == 3) val1 -= (val1 * evy) >> 4;
+                if      (compmode == 2) val1 += (((0x3F - val1) * evy) + 0x8) >> 4;
+                else if (compmode == 3) val1 -= ((val1 * evy) + 0x7) >> 4;
             }
             else
                 val1 = val2;
@@ -141,7 +141,7 @@ void main()
             int evy = mbright.r & 0x1F;
             if (evy > 16) evy = 16;
 
-            pixel += ((ivec4(0x3F,0x3F,0x3F,0) - pixel) * evy) >> 4;
+            pixel += ((0x3F - pixel) * evy) >> 4;
         }
         else if (brightmode == 2)
         {
@@ -149,7 +149,7 @@ void main()
             int evy = mbright.r & 0x1F;
             if (evy > 16) evy = 16;
 
-            pixel -= (pixel * evy) >> 4;
+            pixel -= ((pixel * evy) + 0xF) >> 4;
         }
     }
 

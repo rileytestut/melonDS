@@ -1,3 +1,21 @@
+/*
+    Copyright 2016-2022 melonDS team, RSDuck
+
+    This file is part of melonDS.
+
+    melonDS is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with melonDS. If not, see http://www.gnu.org/licenses/.
+*/
+
 #ifndef ARMJIT_A64_COMPILER_H
 #define ARMJIT_A64_COMPILER_H
 
@@ -18,6 +36,7 @@
 namespace ARMJIT
 {
 
+const Arm64Gen::ARM64Reg RMemBase = Arm64Gen::X26;
 const Arm64Gen::ARM64Reg RCPSR = Arm64Gen::W27;
 const Arm64Gen::ARM64Reg RCycles = Arm64Gen::W28;
 const Arm64Gen::ARM64Reg RCPU = Arm64Gen::X29;
@@ -85,8 +104,8 @@ public:
     Compiler();
     ~Compiler();
 
-    void PushRegs(bool saveHiRegs);
-    void PopRegs(bool saveHiRegs);
+    void PushRegs(bool saveHiRegs, bool saveRegsToBeChanged, bool allowUnload = true);
+    void PopRegs(bool saveHiRegs, bool saveRegsToBeChanged);
 
     Arm64Gen::ARM64Reg MapReg(int reg)
     {
@@ -94,7 +113,7 @@ public:
         return RegCache.Mapping[reg];
     }
 
-    JitBlockEntry CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount);
+    JitBlockEntry CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount, bool hasMemInstr);
 
     bool CanCompile(bool thumb, u16 kind);
 
@@ -170,7 +189,7 @@ public:
     void T_Comp_BL_LONG_2();
     void T_Comp_BL_Merged();
 
-    s32 Comp_MemAccessBlock(int rn, BitSet16 regs, bool store, bool preinc, bool decrement, bool usermode);
+    s32 Comp_MemAccessBlock(int rn, BitSet16 regs, bool store, bool preinc, bool decrement, bool usermode, bool skipLoadingRn);
 
     void Comp_Mul_Mla(bool S, bool mla, Arm64Gen::ARM64Reg rd, Arm64Gen::ARM64Reg rm, Arm64Gen::ARM64Reg rs, Arm64Gen::ARM64Reg rn);
 
@@ -245,16 +264,7 @@ public:
     u32 JitMemSecondarySize;
     u32 JitMemMainSize;
 
-    void* ReadBanked, *WriteBanked;
-
-    void* JumpToFuncs9[3];
-    void* JumpToFuncs7[3];
-
     std::unordered_map<ptrdiff_t, LoadStorePatch> LoadStorePatches; 
-
-    // [Console Type][Num][Size][Sign Extend][Output register]
-    void* PatchedLoadFuncs[2][2][3][2][8];
-    void* PatchedStoreFuncs[2][2][3][8];
 
     RegisterCache<Compiler, Arm64Gen::ARM64Reg> RegCache;
 
@@ -267,6 +277,15 @@ public:
     void* JitRWStart;
     void* JitRXStart;
 #endif
+
+    void* ReadBanked, *WriteBanked;
+
+    void* JumpToFuncs9[3];
+    void* JumpToFuncs7[3];
+
+    // [Console Type][Num][Size][Sign Extend][Output register]
+    void* PatchedLoadFuncs[2][2][3][2][32];
+    void* PatchedStoreFuncs[2][2][3][32];
 };
 
 }

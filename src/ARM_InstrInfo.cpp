@@ -1,8 +1,26 @@
+/*
+    Copyright 2016-2022 melonDS team
+
+    This file is part of melonDS.
+
+    melonDS is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with melonDS. If not, see http://www.gnu.org/licenses/.
+*/
+
 #include "ARM_InstrInfo.h"
 
 #include <stdio.h>
 
-#include "Config.h"
+#include "ARMJIT.h"
 
 namespace ARMInstrInfo
 {
@@ -212,7 +230,7 @@ enum {
     T_SetMaybeC     = 1 << 17,
     T_ReadC         = 1 << 18,
     T_SetC          = 1 << 19,
-    
+
     T_WriteMem      = 1 << 20,
     T_LoadMem       = 1 << 21,
 };
@@ -327,7 +345,7 @@ Info Decode(bool thumb, u32 num, u32 instr)
             res.DstRegs |= 1 << (instr & 0x7);
         if (data & T_Write8)
             res.DstRegs |= 1 << ((instr >> 8) & 0x7);
-        
+
         if (data & T_ReadHi0)
             res.SrcRegs |= 1 << ((instr & 0x7) | ((instr >> 4) & 0x8));
         if (data & T_ReadHi3)
@@ -363,12 +381,12 @@ Info Decode(bool thumb, u32 num, u32 instr)
 
         if (data & T_WriteMem)
             res.SpecialKind = special_WriteMem;
-        
+
         if (data & T_LoadMem)
         {
             if (res.Kind == tk_LDR_PCREL)
             {
-                if (!Config::JIT_LiteralOptimisations)
+                if (!ARMJIT::LiteralOptimizations)
                     res.SrcRegs |= 1 << 15;
                 res.SpecialKind = special_LoadLiteral;
             }
@@ -453,18 +471,18 @@ Info Decode(bool thumb, u32 num, u32 instr)
             res.SrcRegs |= 1 << ((instr >> 8) & 0xF);
         if (data & A_Read12)
             res.SrcRegs |= 1 << ((instr >> 12) & 0xF);
-        
+
         if (data & A_Write12)
             res.DstRegs |= 1 << ((instr >> 12) & 0xF);
         if (data & A_Write16)
             res.DstRegs |= 1 << ((instr >> 16) & 0xF);
-        
+
         if (data & A_MemWriteback && instr & (1 << 21))
             res.DstRegs |= 1 << ((instr >> 16) & 0xF);
 
         if (data & A_BranchAlways)
             res.DstRegs |= 1 << 15;
-        
+
         if (data & A_Read12Double)
         {
             res.SrcRegs |= 1 << ((instr >> 12) & 0xF);
@@ -508,16 +526,21 @@ Info Decode(bool thumb, u32 num, u32 instr)
         if (data & A_LoadMem)
         {
             if (res.SrcRegs == (1 << 15))
-               res.SpecialKind = special_LoadLiteral;
+                res.SpecialKind = special_LoadLiteral;
             else
                 res.SpecialKind = special_LoadMem;
         }
-        
+
         if (res.Kind == ak_LDM)
         {
             u16 set = (instr & 0xFFFF);
             res.NotStrictlyNeeded |= set & ~(res.SrcRegs|res.DstRegs|(1<<15));
             res.DstRegs |= set;
+            // when the instruction is executed not in usermode a banked register in memory will be written to
+            // but the unbanked register will still be allocated, so it is expected to carry the proper value
+            // thus it is a source register
+            if (instr & (1<<22))
+                res.SrcRegs |= set & 0x7F00;
         }
         if (res.Kind == ak_STM)
         {

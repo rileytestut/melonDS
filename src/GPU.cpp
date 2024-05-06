@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -21,6 +21,11 @@
 #include "NDS.h"
 #include "GPU.h"
 
+#ifdef JIT_ENABLED
+#include "ARMJIT.h"
+#endif
+
+#include "GPU2D_Soft.h"
 
 namespace GPU
 {
@@ -79,11 +84,12 @@ u8* VRAMPtr_BOBJ[0x8];
 
 int FrontBuffer;
 u32* Framebuffer[2][2];
-int Renderer;
-bool Accelerated;
+int Renderer = 0;
 
-GPU2D* GPU2D_A;
-GPU2D* GPU2D_B;
+GPU2D::Unit GPU2D_A(0);
+GPU2D::Unit GPU2D_B(1);
+
+std::unique_ptr<GPU2D::Renderer2D> GPU2D_Renderer = {};
 
 /*
     VRAM invalidation tracking
@@ -93,8 +99,7 @@ GPU2D* GPU2D_B;
         we don't want to completely invalidate them every time they're unmapped and remapped
 
     For this reason we don't track the dirtyness per mapping region, but instead per VRAM bank
-    with VRAMDirty. Writes to LCDC go directly into VRAMDirty, while writes via other mapping regions
-    like BG or OBJ are first tracked in VRAMWritten_* and need to be flushed using SyncDirtyFlags.
+    with VRAMDirty.
 
     This is more or less a description of VRAMTrackingSet::DeriveState
         Each time before the memory is read two things could have happened
@@ -120,13 +125,6 @@ VRAMTrackingSet<8*1024, 8*1024> VRAMDirty_BOBJExtPal;
 VRAMTrackingSet<512*1024, 128*1024> VRAMDirty_Texture;
 VRAMTrackingSet<128*1024, 16*1024> VRAMDirty_TexPal;
 
-
-NonStupidBitField<512*1024/VRAMDirtyGranularity> VRAMWritten_ABG;
-NonStupidBitField<256*1024/VRAMDirtyGranularity> VRAMWritten_AOBJ;
-NonStupidBitField<128*1024/VRAMDirtyGranularity> VRAMWritten_BBG;
-NonStupidBitField<128*1024/VRAMDirtyGranularity> VRAMWritten_BOBJ;
-NonStupidBitField<256*1024/VRAMDirtyGranularity> VRAMWritten_ARM7;
-
 NonStupidBitField<128*1024/VRAMDirtyGranularity> VRAMDirty[9];
 
 u8 VRAMFlat_ABG[512*1024];
@@ -145,25 +143,26 @@ u8 VRAMFlat_TexPal[128*1024];
 u32 OAMDirty;
 u32 PaletteDirty;
 
+#ifdef OGLRENDERER_ENABLED
+std::unique_ptr<GLCompositor> CurGLCompositor = {};
+#endif
+
 bool Init()
 {
-    GPU2D_A = new GPU2D_Soft(0);
-    GPU2D_B = new GPU2D_Soft(1);
+    GPU2D_Renderer = std::make_unique<GPU2D::SoftRenderer>();
     if (!GPU3D::Init()) return false;
 
     FrontBuffer = 0;
     Framebuffer[0][0] = NULL; Framebuffer[0][1] = NULL;
     Framebuffer[1][0] = NULL; Framebuffer[1][1] = NULL;
     Renderer = 0;
-    Accelerated = false;
 
     return true;
 }
 
 void DeInit()
 {
-    delete GPU2D_A;
-    delete GPU2D_B;
+    GPU2D_Renderer.reset();
     GPU3D::DeInit();
 
     if (Framebuffer[0][0]) delete[] Framebuffer[0][0];
@@ -250,27 +249,29 @@ void Reset()
     memset(VRAMPtr_BBG, 0, sizeof(VRAMPtr_BBG));
     memset(VRAMPtr_BOBJ, 0, sizeof(VRAMPtr_BOBJ));
 
-    int fbsize;
-    if (Accelerated) fbsize = (256*3 + 1) * 192;
-    else             fbsize = 256 * 192;
-    for (int i = 0; i < fbsize; i++)
+    size_t fbsize;
+    if (GPU3D::CurrentRenderer->Accelerated)
+        fbsize = (256*3 + 1) * 192;
+    else
+        fbsize = 256 * 192;
+
+    for (size_t i = 0; i < fbsize; i++)
     {
         Framebuffer[0][0][i] = 0xFFFFFFFF;
         Framebuffer[1][0][i] = 0xFFFFFFFF;
     }
-    for (int i = 0; i < fbsize; i++)
+    for (size_t i = 0; i < fbsize; i++)
     {
         Framebuffer[0][1][i] = 0xFFFFFFFF;
         Framebuffer[1][1][i] = 0xFFFFFFFF;
     }
 
-    GPU2D_A->Reset();
-    GPU2D_B->Reset();
+    GPU2D_A.Reset();
+    GPU2D_B.Reset();
     GPU3D::Reset();
 
     int backbuf = FrontBuffer ? 0 : 1;
-    GPU2D_A->SetFramebuffer(Framebuffer[backbuf][1]);
-    GPU2D_B->SetFramebuffer(Framebuffer[backbuf][0]);
+    GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][1], Framebuffer[backbuf][0]);
 
     ResetRenderer();
 
@@ -283,12 +284,22 @@ void Reset()
 void Stop()
 {
     int fbsize;
-    if (Accelerated) fbsize = (256*3 + 1) * 192;
-    else             fbsize = 256 * 192;
+    if (GPU3D::CurrentRenderer->Accelerated)
+        fbsize = (256*3 + 1) * 192;
+    else
+        fbsize = 256 * 192;
+
     memset(Framebuffer[0][0], 0, fbsize*4);
     memset(Framebuffer[0][1], 0, fbsize*4);
     memset(Framebuffer[1][0], 0, fbsize*4);
     memset(Framebuffer[1][1], 0, fbsize*4);
+
+#ifdef OGLRENDERER_ENABLED
+    // This needs a better way to know that we're
+    // using the OpenGL renderer specifically
+    if (GPU3D::CurrentRenderer->Accelerated)
+        CurGLCompositor->Stop();
+#endif
 }
 
 void DoSavestate(Savestate* file)
@@ -350,8 +361,8 @@ void DoSavestate(Savestate* file)
             VRAMPtr_BOBJ[i] = GetUniqueBankPtr(VRAMMap_BOBJ[i], i << 14);
     }
 
-    GPU2D_A->DoSavestate(file);
-    GPU2D_B->DoSavestate(file);
+    GPU2D_A.DoSavestate(file);
+    GPU2D_B.DoSavestate(file);
     GPU3D::DoSavestate(file);
 
     ResetVRAMCache();
@@ -362,13 +373,11 @@ void AssignFramebuffers()
     int backbuf = FrontBuffer ? 0 : 1;
     if (NDS::PowerControl9 & (1<<15))
     {
-        GPU2D_A->SetFramebuffer(Framebuffer[backbuf][0]);
-        GPU2D_B->SetFramebuffer(Framebuffer[backbuf][1]);
+        GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][0], Framebuffer[backbuf][1]);
     }
     else
     {
-        GPU2D_A->SetFramebuffer(Framebuffer[backbuf][1]);
-        GPU2D_B->SetFramebuffer(Framebuffer[backbuf][0]);
+        GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][1], Framebuffer[backbuf][0]);
     }
 }
 
@@ -377,37 +386,42 @@ void InitRenderer(int renderer)
 #ifdef OGLRENDERER_ENABLED
     if (renderer == 1)
     {
-        if (!GLCompositor::Init())
+        CurGLCompositor = std::make_unique<GLCompositor>();
+        // Create opengl rendrerer
+        if (!CurGLCompositor->Init())
         {
+            // Fallback on software renderer
             renderer = 0;
+            GPU3D::CurrentRenderer = std::make_unique<GPU3D::SoftRenderer>();
+            GPU3D::CurrentRenderer->Init();
         }
-        else if (!GPU3D::GLRenderer::Init())
+        GPU3D::CurrentRenderer = std::make_unique<GPU3D::GLRenderer>();
+        if (!GPU3D::CurrentRenderer->Init())
         {
-            GLCompositor::DeInit();
+            // Fallback on software renderer
+            CurGLCompositor->DeInit();
+            CurGLCompositor.reset();
             renderer = 0;
+            GPU3D::CurrentRenderer = std::make_unique<GPU3D::SoftRenderer>();
         }
     }
     else
 #endif
     {
-        GPU3D::SoftRenderer::Init();
+        GPU3D::CurrentRenderer = std::make_unique<GPU3D::SoftRenderer>();
+        GPU3D::CurrentRenderer->Init();
     }
 
     Renderer = renderer;
-    Accelerated = renderer != 0;
 }
 
 void DeInitRenderer()
 {
-    if (Renderer == 0)
-    {
-        GPU3D::SoftRenderer::DeInit();
-    }
+    GPU3D::CurrentRenderer->DeInit();
 #ifdef OGLRENDERER_ENABLED
-    else
+    if (Renderer == 1)
     {
-        GPU3D::GLRenderer::DeInit();
-        GLCompositor::DeInit();
+        CurGLCompositor->DeInit();
     }
 #endif
 }
@@ -416,13 +430,13 @@ void ResetRenderer()
 {
     if (Renderer == 0)
     {
-        GPU3D::SoftRenderer::Reset();
+        GPU3D::CurrentRenderer->Reset();
     }
 #ifdef OGLRENDERER_ENABLED
     else
     {
-        GLCompositor::Reset();
-        GPU3D::GLRenderer::Reset();
+        CurGLCompositor->Reset();
+        GPU3D::CurrentRenderer->Reset();
     }
 #endif
 }
@@ -435,10 +449,12 @@ void SetRenderSettings(int renderer, RenderSettings& settings)
         InitRenderer(renderer);
     }
 
-    bool accel = Accelerated;
     int fbsize;
-    if (accel) fbsize = (256*3 + 1) * 192;
-    else       fbsize = 256 * 192;
+    if (GPU3D::CurrentRenderer->Accelerated)
+        fbsize = (256*3 + 1) * 192;
+    else
+        fbsize = 256 * 192;
+
     if (Framebuffer[0][0]) { delete[] Framebuffer[0][0]; Framebuffer[0][0] = nullptr; }
     if (Framebuffer[1][0]) { delete[] Framebuffer[1][0]; Framebuffer[1][0] = nullptr; }
     if (Framebuffer[0][1]) { delete[] Framebuffer[0][1]; Framebuffer[0][1] = nullptr; }
@@ -456,18 +472,15 @@ void SetRenderSettings(int renderer, RenderSettings& settings)
 
     AssignFramebuffers();
 
-    GPU2D_A->SetRenderSettings(accel);
-    GPU2D_B->SetRenderSettings(accel);
-
     if (Renderer == 0)
     {
-        GPU3D::SoftRenderer::SetRenderSettings(settings);
+        GPU3D::CurrentRenderer->SetRenderSettings(settings);
     }
 #ifdef OGLRENDERER_ENABLED
     else
     {
-        GLCompositor::SetRenderSettings(settings);
-        GPU3D::GLRenderer::SetRenderSettings(settings);
+        CurGLCompositor->SetRenderSettings(settings);
+        GPU3D::CurrentRenderer->SetRenderSettings(settings);
     }
 #endif
 }
@@ -520,6 +533,8 @@ u8* GetUniqueBankPtr(u32 mask, u32 offset)
 
 void MapVRAM_AB(u32 bank, u8 cnt)
 {
+    cnt &= 0x9B;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -578,6 +593,8 @@ void MapVRAM_AB(u32 bank, u8 cnt)
 
 void MapVRAM_CD(u32 bank, u8 cnt)
 {
+    cnt &= 0x9F;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -638,7 +655,11 @@ void MapVRAM_CD(u32 bank, u8 cnt)
         case 2: // ARM7 VRAM
             ofs &= 0x1;
             VRAMMap_ARM7[ofs] |= bankmask;
+            memset(VRAMDirty[bank].Data, 0xFF, sizeof(VRAMDirty[bank].Data));
             VRAMSTAT |= (1 << (bank-2));
+#ifdef JIT_ENABLED
+            ARMJIT::CheckAndInvalidateWVRAM(ofs);
+#endif
             break;
 
         case 3: // texture
@@ -661,6 +682,8 @@ void MapVRAM_CD(u32 bank, u8 cnt)
 
 void MapVRAM_E(u32 bank, u8 cnt)
 {
+    cnt &= 0x87;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -723,6 +746,8 @@ void MapVRAM_E(u32 bank, u8 cnt)
 
 void MapVRAM_FG(u32 bank, u8 cnt)
 {
+    cnt &= 0x9F;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -821,6 +846,8 @@ void MapVRAM_FG(u32 bank, u8 cnt)
 
 void MapVRAM_H(u32 bank, u8 cnt)
 {
+    cnt &= 0x83;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -881,6 +908,8 @@ void MapVRAM_H(u32 bank, u8 cnt)
 
 void MapVRAM_I(u32 bank, u8 cnt)
 {
+    cnt &= 0x83;
+
     u8 oldcnt = VRAMCNT[bank];
     VRAMCNT[bank] = cnt;
 
@@ -960,8 +989,8 @@ void SetPowerCnt(u32 val)
 
     if (!(val & (1<<0))) printf("!!! CLEARING POWCNT BIT0. DANGER\n");
 
-    GPU2D_A->SetEnabled(val & (1<<1));
-    GPU2D_B->SetEnabled(val & (1<<9));
+    GPU2D_A.SetEnabled(val & (1<<1));
+    GPU2D_B.SetEnabled(val & (1<<9));
     GPU3D::SetEnabled(val & (1<<3), val & (1<<2));
 
     AssignFramebuffers();
@@ -976,9 +1005,9 @@ void DisplayFIFO(u32 x)
     if (x > 0)
     {
         if (x == 8)
-            GPU2D_A->SampleFIFO(0, 5);
+            GPU2D_A.SampleFIFO(0, 5);
         else
-            GPU2D_A->SampleFIFO(x-11, 8);
+            GPU2D_A.SampleFIFO(x-11, 8);
     }
 
     if (x < 256)
@@ -988,7 +1017,7 @@ void DisplayFIFO(u32 x)
         NDS::ScheduleEvent(NDS::Event_DisplayFIFO, true, 6*8, DisplayFIFO, x+8);
     }
     else
-        GPU2D_A->SampleFIFO(253, 3); // sample the remaining pixels
+        GPU2D_A.SampleFIFO(253, 3); // sample the remaining pixels
 }
 
 void StartFrame()
@@ -996,7 +1025,7 @@ void StartFrame()
     // only run the display FIFO if needed:
     // * if it is used for display or capture
     // * if we have display FIFO DMA
-    RunFIFO = GPU2D_A->UsesFIFO() || NDS::DMAsInMode(0, 0x04);
+    RunFIFO = GPU2D_A.UsesFIFO() || NDS::DMAsInMode(0, 0x04);
 
     TotalScanlines = 0;
     StartScanline(0);
@@ -1007,23 +1036,21 @@ void StartHBlank(u32 line)
     DispStat[0] |= (1<<1);
     DispStat[1] |= (1<<1);
 
-    SyncDirtyFlags();
-
     if (VCount < 192)
     {
         // draw
         // note: this should start 48 cycles after the scanline start
         if (line < 192)
         {
-            GPU2D_A->DrawScanline(line);
-            GPU2D_B->DrawScanline(line);
+            GPU2D_Renderer->DrawScanline(line, &GPU2D_A);
+            GPU2D_Renderer->DrawScanline(line, &GPU2D_B);
         }
 
         // sprites are pre-rendered one scanline in advance
         if (line < 191)
         {
-            GPU2D_A->DrawSprites(line+1);
-            GPU2D_B->DrawSprites(line+1);
+            GPU2D_Renderer->DrawSprites(line+1, &GPU2D_A);
+            GPU2D_Renderer->DrawSprites(line+1, &GPU2D_B);
         }
 
         NDS::CheckDMAs(0, 0x02);
@@ -1034,8 +1061,8 @@ void StartHBlank(u32 line)
     }
     else if (VCount == 262)
     {
-        GPU2D_A->DrawSprites(0);
-        GPU2D_B->DrawSprites(0);
+        GPU2D_Renderer->DrawSprites(0, &GPU2D_A);
+        GPU2D_Renderer->DrawSprites(0, &GPU2D_B);
     }
 
     if (DispStat[0] & (1<<4)) NDS::SetIRQ(0, NDS::IRQ_HBlank);
@@ -1053,13 +1080,19 @@ void FinishFrame(u32 lines)
     AssignFramebuffers();
 
     TotalScanlines = lines;
+
+    if (GPU3D::AbortFrame)
+    {
+        GPU3D::RestartFrame();
+        GPU3D::AbortFrame = false;
+    }
 }
 
 void StartScanline(u32 line)
 {
     if (line == 0)
         VCount = 0;
-    else if (NextVCount != -1)
+    else if (NextVCount != 0xFFFFFFFF)
         VCount = NextVCount;
     else
         VCount++;
@@ -1087,8 +1120,8 @@ void StartScanline(u32 line)
     else
         DispStat[1] &= ~(1<<2);
 
-    GPU2D_A->CheckWindows(VCount);
-    GPU2D_B->CheckWindows(VCount);
+    GPU2D_A.CheckWindows(VCount);
+    GPU2D_B.CheckWindows(VCount);
 
     if (VCount >= 2 && VCount < 194)
         NDS::CheckDMAs(0, 0x03);
@@ -1099,8 +1132,9 @@ void StartScanline(u32 line)
     {
         if (line == 0)
         {
-            GPU2D_A->VBlankEnd();
-            GPU2D_B->VBlankEnd();
+            GPU2D_Renderer->VBlankEnd(&GPU2D_A, &GPU2D_B);
+            GPU2D_A.VBlankEnd();
+            GPU2D_B.VBlankEnd();
         }
 
         if (RunFIFO)
@@ -1118,6 +1152,14 @@ void StartScanline(u32 line)
     {
         if (VCount == 192)
         {
+            // in reality rendering already finishes at line 144
+            // and games might already start to modify texture memory.
+            // That doesn't matter for us because we cache the entire
+            // texture memory anyway and only update it before the start
+            //of the next frame.
+            // So we can give the rasteriser a bit more headroom
+            GPU3D::VCount144();
+
             // VBlank
             DispStat[0] |= (1<<0);
             DispStat[1] |= (1<<0);
@@ -1130,17 +1172,15 @@ void StartScanline(u32 line)
             if (DispStat[0] & (1<<3)) NDS::SetIRQ(0, NDS::IRQ_VBlank);
             if (DispStat[1] & (1<<3)) NDS::SetIRQ(1, NDS::IRQ_VBlank);
 
-            GPU2D_A->VBlank();
-            GPU2D_B->VBlank();
+            GPU2D_A.VBlank();
+            GPU2D_B.VBlank();
             GPU3D::VBlank();
 
 #ifdef OGLRENDERER_ENABLED
-            if (Accelerated) GLCompositor::RenderFrame();
+            // Need a better way to identify the openGL renderer in particular
+            if (GPU3D::CurrentRenderer->Accelerated)
+                CurGLCompositor->RenderFrame();
 #endif
-        }
-        else if (VCount == 144)
-        {
-            GPU3D::VCount144();
         }
     }
 
@@ -1165,6 +1205,7 @@ void SetVCount(u16 val)
     // 3D engine seems to give up on the current frame in that situation, repeating the last two scanlines
     // TODO: also check the various DMA types that can be involved
 
+    GPU3D::AbortFrame |= NextVCount != val;
     NextVCount = val;
 }
 
@@ -1177,7 +1218,7 @@ NonStupidBitField<Size/VRAMDirtyGranularity> VRAMTrackingSet<Size, MappingGranul
     {
         if (currentMappings[i] != Mapping[i])
         {
-            result |= NonStupidBitField<Size/VRAMDirtyGranularity>(i*VRAMBitsPerMapping, VRAMBitsPerMapping);
+            result.SetRange(i*VRAMBitsPerMapping, VRAMBitsPerMapping);
             banksToBeZeroed |= currentMappings[i];
             Mapping[i] = currentMappings[i];
         }
@@ -1195,23 +1236,23 @@ NonStupidBitField<Size/VRAMDirtyGranularity> VRAMTrackingSet<Size, MappingGranul
                 // hack for **speed**
                 // this could probably be done less ugly but then we would rely
                 // on the compiler for vectorisation
-                static_assert(VRAMDirtyGranularity == 512);
+                static_assert(VRAMDirtyGranularity == 512, "");
                 if (MappingGranularity == 16*1024)
                 {
                     u32 dirty = ((u32*)VRAMDirty[num].Data)[i & (VRAMMask[num] >> 14)];
-                    ((u32*)result.Data)[i] |= dirty;
+                    result.Data[i / 2] |= (u64)dirty << ((i&1)*32);
                 }
                 else if (MappingGranularity == 8*1024)
                 {
                     u16 dirty = ((u16*)VRAMDirty[num].Data)[i & (VRAMMask[num] >> 13)];
-                    ((u16*)result.Data)[i] |= dirty;
+                    result.Data[i / 4] |= (u64)dirty << ((i&3)*16);
                 }
                 else if (MappingGranularity == 128*1024)
                 {
-                    ((u64*)result.Data)[i * 4 + 0] |= ((u64*)VRAMDirty[num].Data)[0];
-                    ((u64*)result.Data)[i * 4 + 1] |= ((u64*)VRAMDirty[num].Data)[1];
-                    ((u64*)result.Data)[i * 4 + 2] |= ((u64*)VRAMDirty[num].Data)[2];
-                    ((u64*)result.Data)[i * 4 + 3] |= ((u64*)VRAMDirty[num].Data)[3];
+                    result.Data[i * 4 + 0] |= VRAMDirty[num].Data[0];
+                    result.Data[i * 4 + 1] |= VRAMDirty[num].Data[1];
+                    result.Data[i * 4 + 2] |= VRAMDirty[num].Data[2];
+                    result.Data[i * 4 + 3] |= VRAMDirty[num].Data[3];
                 }
                 else
                 {
@@ -1226,7 +1267,7 @@ NonStupidBitField<Size/VRAMDirtyGranularity> VRAMTrackingSet<Size, MappingGranul
     {
         u32 num = __builtin_ctz(banksToBeZeroed);
         banksToBeZeroed &= ~(1 << num);
-        memset(VRAMDirty[num].Data, 0, sizeof(VRAMDirty[num].Data));
+        VRAMDirty[num].Clear();
     }
 
     return result;
@@ -1238,35 +1279,6 @@ template NonStupidBitField<512*1024/VRAMDirtyGranularity> VRAMTrackingSet<512*10
 template NonStupidBitField<128*1024/VRAMDirtyGranularity> VRAMTrackingSet<128*1024, 16*1024>::DeriveState(u32*);
 template NonStupidBitField<256*1024/VRAMDirtyGranularity> VRAMTrackingSet<256*1024, 16*1024>::DeriveState(u32*);
 template NonStupidBitField<512*1024/VRAMDirtyGranularity> VRAMTrackingSet<512*1024, 16*1024>::DeriveState(u32*);
-
-template <u32 Size>
-void SyncDirtyFlags(u32* mappings, NonStupidBitField<Size>& writtenFlags)
-{
-    const u32 VRAMWrittenBitsPer16KB = 16*1024/VRAMDirtyGranularity;
-
-    for (typename NonStupidBitField<Size>::Iterator it = writtenFlags.Begin(); it != writtenFlags.End(); it++)
-    {
-        u32 mapping = mappings[*it / VRAMWrittenBitsPer16KB];
-        while (mapping != 0)
-        {
-            u32 num = __builtin_ctz(mapping);
-
-            VRAMDirty[num][*it & (VRAMMask[num] / VRAMDirtyGranularity)] = true;
-
-            mapping &= ~(1 << num);
-        }
-    }
-    memset(writtenFlags.Data, 0, sizeof(writtenFlags.Data));
-}
-
-void SyncDirtyFlags()
-{
-    SyncDirtyFlags(VRAMMap_ABG, VRAMWritten_ABG);
-    SyncDirtyFlags(VRAMMap_AOBJ, VRAMWritten_AOBJ);
-    SyncDirtyFlags(VRAMMap_BBG, VRAMWritten_BBG);
-    SyncDirtyFlags(VRAMMap_BOBJ, VRAMWritten_BOBJ);
-    SyncDirtyFlags(VRAMMap_ARM7, VRAMWritten_ARM7);
-}
 
 template <u32 MappingGranularity, u32 Size>
 inline bool CopyLinearVRAM(u8* flat, u32* mappings, NonStupidBitField<Size>& dirty, u64 (*slowAccess)(u32 addr))

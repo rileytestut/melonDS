@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <cstring>
 #include <vector>
+#include <limits>
 
 #include "Compat.h"
 #include "Align.h"
@@ -16,7 +17,7 @@
 #include "MathUtil.h"
 
 #ifdef __APPLE__
-#include <libkern/OSCacheControl.h>
+    #include <libkern/OSCacheControl.h>
 #endif
 
 namespace Arm64Gen
@@ -388,11 +389,9 @@ void ARM64XEmitter::FlushIcacheSection(u8* start, u8* end)
   if (start == end)
     return;
 
-#if defined(IOS)
+#if defined(__APPLE__)
   // Header file says this is equivalent to: sys_icache_invalidate(start, end - start);
   sys_cache_control(kCacheFunctionPrepareForExecution, start, end - start);
-#elif defined(__APPLE__)
-    sys_icache_invalidate(start, end - start);
 #else
   // Don't rely on GCC's __clear_cache implementation, as it caches
   // icache/dcache cache line sizes, that can vary between cores on
@@ -1608,7 +1607,21 @@ void ARM64XEmitter::BICS(ARM64Reg Rd, ARM64Reg Rn, ARM64Reg Rm, ArithOption Shif
 
 void ARM64XEmitter::MOV(ARM64Reg Rd, ARM64Reg Rm, ArithOption Shift)
 {
-  ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, Shift);
+  if (Shift.GetType() == ArithOption::TYPE_SHIFTEDREG)
+  {
+    switch (Shift.GetShiftType())
+    {
+    case ST_LSL: LSL(Rd, Rm, Shift.GetShiftAmount()); break;
+    case ST_LSR: LSR(Rd, Rm, Shift.GetShiftAmount()); break;
+    case ST_ASR: ASR(Rd, Rm, Shift.GetShiftAmount()); break;
+    case ST_ROR: ROR(Rd, Rm, Shift.GetShiftAmount()); break;
+    default: ASSERT_MSG(DYNA_REC, false, "Invalid shift type"); break;
+    }
+  }
+  else
+  {
+    ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, Shift);
+  }
 }
 
 void ARM64XEmitter::MOV(ARM64Reg Rd, ARM64Reg Rm)

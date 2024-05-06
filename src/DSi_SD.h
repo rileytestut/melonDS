@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -19,9 +19,10 @@
 #ifndef DSI_SD_H
 #define DSI_SD_H
 
-#include <string.h>
+#include <cstring>
 #include "FIFO.h"
-
+#include "FATStorage.h"
+#include "Savestate.h"
 
 class DSi_SDDevice;
 
@@ -32,6 +33,7 @@ public:
     DSi_SDHost(u32 num);
     ~DSi_SDHost();
 
+    void CloseHandles();
     void Reset();
 
     void DoSavestate(Savestate* file);
@@ -85,11 +87,11 @@ private:
     u32 Param;
     u16 ResponseBuffer[8];
 
-    FIFO<u16>* DataFIFO[2];
-    u32 CurFIFO; // FIFO accessible for read/write
-    FIFO<u32>* DataFIFO32;
-
     DSi_SDDevice* Ports[2];
+
+    u32 CurFIFO; // FIFO accessible for read/write
+    FIFO<u16, 0x100> DataFIFO[2];
+    FIFO<u32, 0x80> DataFIFO32;
 
     void UpdateData32IRQ();
     void ClearIRQ(u32 irq);
@@ -102,15 +104,18 @@ private:
 class DSi_SDDevice
 {
 public:
-    DSi_SDDevice(DSi_SDHost* host) { Host = host; IRQ = false; }
+    DSi_SDDevice(DSi_SDHost* host) { Host = host; IRQ = false; ReadOnly = false; }
     virtual ~DSi_SDDevice() {}
 
     virtual void Reset() = 0;
+
+    virtual void DoSavestate(Savestate* file) = 0;
 
     virtual void SendCMD(u8 cmd, u32 param) = 0;
     virtual void ContinueTransfer() = 0;
 
     bool IRQ;
+    bool ReadOnly;
 
 protected:
     DSi_SDHost* Host;
@@ -120,10 +125,13 @@ protected:
 class DSi_MMCStorage : public DSi_SDDevice
 {
 public:
-    DSi_MMCStorage(DSi_SDHost* host, bool internal, const char* path);
+    DSi_MMCStorage(DSi_SDHost* host, bool internal, std::string filename);
+    DSi_MMCStorage(DSi_SDHost* host, bool internal, std::string filename, u64 size, bool readonly, std::string sourcedir);
     ~DSi_MMCStorage();
 
     void Reset();
+
+    void DoSavestate(Savestate* file);
 
     void SetCID(u8* cid) { memcpy(CID, cid, 16); }
 
@@ -134,8 +142,8 @@ public:
 
 private:
     bool Internal;
-    char FilePath[1024];
     FILE* File;
+    FATStorage* SD;
 
     u8 CID[16];
     u8 CSD[16];

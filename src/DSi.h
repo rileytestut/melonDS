@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -26,6 +26,9 @@ namespace DSi
 {
 
 extern u16 SCFG_BIOS;
+extern u16 SCFG_Clock9;
+extern u32 SCFG_EXT[2];
+
 
 extern u8 ARM9iBIOS[0x10000];
 extern u8 ARM7iBIOS[0x10000];
@@ -53,7 +56,13 @@ extern u32 NWRAMMask[2][3];
 bool Init();
 void DeInit();
 void Reset();
+void Stop();
 
+void DoSavestate(Savestate* file);
+
+void SetCartInserted(bool inserted);
+
+void SetupDirectBoot();
 void SoftReset();
 
 bool LoadBIOS();

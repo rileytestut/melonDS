@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -21,6 +21,7 @@
 
 #include "DSi_SD.h"
 #include "FIFO.h"
+#include "Savestate.h"
 
 class DSi_NWifi : public DSi_SDDevice
 {
@@ -29,6 +30,8 @@ public:
     ~DSi_NWifi();
 
     void Reset();
+
+    void DoSavestate(Savestate* file);
 
     void SendCMD(u8 cmd, u32 param);
     void SendACMD(u8 cmd, u32 param);
@@ -84,40 +87,40 @@ private:
 
     u16 MB_Read16(int n)
     {
-        u16 ret = Mailbox[n]->Read();
-        ret |= (Mailbox[n]->Read() << 8);
+        u16 ret = Mailbox[n].Read();
+        ret |= (Mailbox[n].Read() << 8);
         return ret;
     }
 
     void MB_Write16(int n, u16 val)
     {
-        Mailbox[n]->Write(val & 0xFF); val >>= 8;
-        Mailbox[n]->Write(val & 0xFF);
+        Mailbox[n].Write(val & 0xFF); val >>= 8;
+        Mailbox[n].Write(val & 0xFF);
     }
 
     u32 MB_Read32(int n)
     {
-        u32 ret = Mailbox[n]->Read();
-        ret |= (Mailbox[n]->Read() << 8);
-        ret |= (Mailbox[n]->Read() << 16);
-        ret |= (Mailbox[n]->Read() << 24);
+        u32 ret = Mailbox[n].Read();
+        ret |= (Mailbox[n].Read() << 8);
+        ret |= (Mailbox[n].Read() << 16);
+        ret |= (Mailbox[n].Read() << 24);
         return ret;
     }
 
     void MB_Write32(int n, u32 val)
     {
-        Mailbox[n]->Write(val & 0xFF); val >>= 8;
-        Mailbox[n]->Write(val & 0xFF); val >>= 8;
-        Mailbox[n]->Write(val & 0xFF); val >>= 8;
-        Mailbox[n]->Write(val & 0xFF);
+        Mailbox[n].Write(val & 0xFF); val >>= 8;
+        Mailbox[n].Write(val & 0xFF); val >>= 8;
+        Mailbox[n].Write(val & 0xFF); val >>= 8;
+        Mailbox[n].Write(val & 0xFF);
     }
 
     void MB_Drain(int n)
     {
-        while (!Mailbox[n]->IsEmpty()) Mailbox[n]->Read();
+        while (!Mailbox[n].IsEmpty()) Mailbox[n].Read();
     }
 
-    FIFO<u8>* Mailbox[9];
+    DynamicFIFO<u8> Mailbox[9];
 
     u8 F0_IRQEnable;
     u8 F0_IRQStatus;

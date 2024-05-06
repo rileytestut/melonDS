@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -19,16 +19,17 @@
 #ifndef SAVESTATE_H
 #define SAVESTATE_H
 
+#include <string>
 #include <stdio.h>
 #include "types.h"
 
-#define SAVESTATE_MAJOR 7
+#define SAVESTATE_MAJOR 9
 #define SAVESTATE_MINOR 0
 
 class Savestate
 {
 public:
-    Savestate(const char* filename, bool save);
+    Savestate(std::string filename, bool save);
     ~Savestate();
 
     bool Error;

@@ -1,3 +1,21 @@
+/*
+    Copyright 2016-2022 melonDS team
+
+    This file is part of melonDS.
+
+    melonDS is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+    FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with melonDS. If not, see http://www.gnu.org/licenses/.
+*/
+
 #ifndef ARMJIT_X64_COMPILER_H
 #define ARMJIT_X64_COMPILER_H
 
@@ -6,6 +24,10 @@
 #include "../ARMJIT.h"
 #include "../ARMJIT_Internal.h"
 #include "../ARMJIT_RegisterCache.h"
+
+#ifdef JIT_PROFILING_ENABLED
+#include <jitprofiling.h>
+#endif
 
 #include <unordered_map>
 
@@ -61,7 +83,7 @@ public:
 
     void Reset();
 
-    JitBlockEntry CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount);
+    JitBlockEntry CompileBlock(ARM* cpu, bool thumb, FetchedInstr instrs[], int instrsCount, bool hasMemoryInstr);
 
     void LoadReg(int reg, Gen::X64Reg nativeReg);
     void SaveReg(int reg, Gen::X64Reg nativeReg);
@@ -99,7 +121,7 @@ public:
     void A_Comp_Mul_Long();
 
     void A_Comp_CLZ();
-    
+
     void A_Comp_MemWB();
     void A_Comp_MemHalf();
     void A_Comp_LDM_STM();
@@ -145,10 +167,10 @@ public:
         memop_SubtractOffset = 1 << 4
     };
     void Comp_MemAccess(int rd, int rn, const Op2& op2, int size, int flags);
-    s32 Comp_MemAccessBlock(int rn, BitSet16 regs, bool store, bool preinc, bool decrement, bool usermode);
+    s32 Comp_MemAccessBlock(int rn, BitSet16 regs, bool store, bool preinc, bool decrement, bool usermode, bool skipLoadingRn);
     bool Comp_MemLoadLiteral(int size, bool signExtend, int rd, u32 addr);
 
-    void Comp_ArithTriOp(void (Compiler::*op)(int, const Gen::OpArg&, const Gen::OpArg&), 
+    void Comp_ArithTriOp(void (Compiler::*op)(int, const Gen::OpArg&, const Gen::OpArg&),
         Gen::OpArg rd, Gen::OpArg rn, Gen::OpArg op2, bool carryUsed, int opFlags);
     void Comp_ArithTriOpReverse(void (Compiler::*op)(int, const Gen::OpArg&, const Gen::OpArg&),
         Gen::OpArg rd, Gen::OpArg rn, Gen::OpArg op2, bool carryUsed, int opFlags);
@@ -174,8 +196,8 @@ public:
 
     Gen::FixupBranch CheckCondition(u32 cond);
 
-    void PushRegs(bool saveHiRegs);
-    void PopRegs(bool saveHiRegs);
+    void PushRegs(bool saveHiRegs, bool saveRegsToBeChanged, bool allowUnload = true);
+    void PopRegs(bool saveHiRegs, bool saveRegsToBeChanged);
 
     Gen::OpArg MapReg(int reg)
     {
@@ -211,6 +233,10 @@ public:
     bool IsJITFault(u8* addr);
 
     u8* RewriteMemAccess(u8* pc);
+
+#ifdef JIT_PROFILING_ENABLED
+    void CreateMethod(const char* namefmt, void* start, ...);
+#endif
 
     u8* FarCode;
     u8* NearCode;

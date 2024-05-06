@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -19,27 +19,26 @@
 #ifndef ARCODEFILE_H
 #define ARCODEFILE_H
 
+#include <string>
 #include <list>
 
 #include "types.h"
 
-typedef struct
+struct ARCode
 {
-    char Name[128];
+    std::string Name;
     bool Enabled;
     u32 CodeLen;
     u32 Code[2*64];
-
-} ARCode;
+};
 
 typedef std::list<ARCode> ARCodeList;
 
-typedef struct
+struct ARCodeCat
 {
-    char Name[128];
+    std::string Name;
     ARCodeList Codes;
-
-} ARCodeCat;
+};
 
 typedef std::list<ARCodeCat> ARCodeCatList;
 
@@ -47,7 +46,7 @@ typedef std::list<ARCodeCat> ARCodeCatList;
 class ARCodeFile
 {
 public:
-    ARCodeFile(const char* filename);
+    ARCodeFile(std::string filename);
     ~ARCodeFile();
 
     bool Error;
@@ -58,7 +57,7 @@ public:
     ARCodeCatList Categories;
 
 private:
-    char Filename[1024];
+    std::string Filename;
 };
 
 #endif // ARCODEFILE_H

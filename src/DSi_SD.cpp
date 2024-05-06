@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -22,7 +22,6 @@
 #include "DSi_SD.h"
 #include "DSi_NWifi.h"
 #include "Platform.h"
-#include "Config.h"
 
 
 // observed IRQ behavior during transfers
@@ -52,22 +51,22 @@ DSi_SDHost::DSi_SDHost(u32 num)
 {
     Num = num;
 
-    DataFIFO[0] = new FIFO<u16>(0x100);
-    DataFIFO[1] = new FIFO<u16>(0x100);
-    DataFIFO32  = new FIFO<u32>(0x80);
-
-    Ports[0] = NULL;
-    Ports[1] = NULL;
+    Ports[0] = nullptr;
+    Ports[1] = nullptr;
 }
 
 DSi_SDHost::~DSi_SDHost()
 {
-    delete DataFIFO[0];
-    delete DataFIFO[1];
-    delete DataFIFO32;
-
     if (Ports[0]) delete Ports[0];
     if (Ports[1]) delete Ports[1];
+}
+
+void DSi_SDHost::CloseHandles()
+{
+    if (Ports[0]) delete Ports[0];
+    if (Ports[1]) delete Ports[1];
+    Ports[0] = nullptr;
+    Ports[1] = nullptr;
 }
 
 void DSi_SDHost::Reset()
@@ -89,10 +88,10 @@ void DSi_SDHost::Reset()
     Param = 0;
     memset(ResponseBuffer, 0, sizeof(ResponseBuffer));
 
-    DataFIFO[0]->Clear();
-    DataFIFO[1]->Clear();
+    DataFIFO[0].Clear();
+    DataFIFO[1].Clear();
     CurFIFO = 0;
-    DataFIFO32->Clear();
+    DataFIFO32.Clear();
 
     IRQStatus = 0;
     IRQMask = 0x8B7F031D;
@@ -110,26 +109,37 @@ void DSi_SDHost::Reset()
 
     TXReq = false;
 
-    if (Ports[0]) delete Ports[0];
-    if (Ports[1]) delete Ports[1];
-    Ports[0] = nullptr;
-    Ports[1] = nullptr;
+    CloseHandles();
 
     if (Num == 0)
     {
         DSi_MMCStorage* sd;
         DSi_MMCStorage* mmc;
 
-        if (Config::DSiSDEnable)
+        if (Platform::GetConfigBool(Platform::DSiSD_Enable))
         {
-            sd = new DSi_MMCStorage(this, false, Config::DSiSDPath);
+            std::string folderpath;
+            if (Platform::GetConfigBool(Platform::DSiSD_FolderSync))
+                folderpath = Platform::GetConfigString(Platform::DSiSD_FolderPath);
+            else
+                folderpath = "";
+
+            sd = new DSi_MMCStorage(this,
+                                    false,
+                                    Platform::GetConfigString(Platform::DSiSD_ImagePath),
+                                    (u64)Platform::GetConfigInt(Platform::DSiSD_ImageSize) * 1024 * 1024,
+                                    Platform::GetConfigBool(Platform::DSiSD_ReadOnly),
+                                    folderpath);
             u8 sd_cid[16] = {0xBD, 0x12, 0x34, 0x56, 0x78, 0x03, 0x4D, 0x30, 0x30, 0x46, 0x50, 0x41, 0x00, 0x00, 0x15, 0x00};
             sd->SetCID(sd_cid);
         }
         else
             sd = nullptr;
 
-        mmc = new DSi_MMCStorage(this, true, Config::DSiNANDPath);
+        std::string nandpath = Platform::GetConfigString(Platform::DSi_NANDPath);
+        std::string instnand = nandpath + Platform::InstanceFileSuffix();
+
+        mmc = new DSi_MMCStorage(this, true, instnand);
         mmc->SetCID(DSi::eMMC_CID);
 
         Ports[0] = sd;
@@ -148,7 +158,41 @@ void DSi_SDHost::Reset()
 
 void DSi_SDHost::DoSavestate(Savestate* file)
 {
-    // TODO!
+    file->Section(Num ? "SDIO" : "SDMM");
+
+    file->Var16(&PortSelect);
+    file->Var16(&SoftReset);
+    file->Var16(&SDClock);
+    file->Var16(&SDOption);
+
+    file->Var32(&IRQStatus);
+    file->Var32(&IRQMask);
+
+    file->Var16(&CardIRQStatus);
+    file->Var16(&CardIRQMask);
+    file->Var16(&CardIRQCtl);
+
+    file->Var16(&DataCtl);
+    file->Var16(&Data32IRQ);
+    file->Var32(&DataMode);
+    file->Var16(&BlockCount16);
+    file->Var16(&BlockCount32);
+    file->Var16(&BlockCountInternal);
+    file->Var16(&BlockLen16);
+    file->Var16(&BlockLen32);
+    file->Var16(&StopAction);
+
+    file->Var16(&Command);
+    file->Var32(&Param);
+    file->VarArray(ResponseBuffer, 8);
+
+    file->Var32(&CurFIFO);
+    DataFIFO[0].DoSavestate(file);
+    DataFIFO[1].DoSavestate(file);
+    DataFIFO32.DoSavestate(file);
+
+    if (Ports[0]) Ports[0]->DoSavestate(file);
+    if (Ports[1]) Ports[1]->DoSavestate(file);
 }
 
 
@@ -160,8 +204,8 @@ void DSi_SDHost::UpdateData32IRQ()
     oldflags &= (Data32IRQ >> 11);
 
     Data32IRQ &= ~0x0300;
-    if (DataFIFO32->Level() >= (BlockLen32>>2)) Data32IRQ |= (1<<8);
-    if (!DataFIFO32->IsEmpty())                 Data32IRQ |= (1<<9);
+    if (DataFIFO32.Level() >= (BlockLen32>>2)) Data32IRQ |= (1<<8);
+    if (!DataFIFO32.IsEmpty())                 Data32IRQ |= (1<<9);
 
     u32 newflags = ((Data32IRQ >> 8) & 0x1) | (((~Data32IRQ) >> 8) & 0x2);
     newflags &= (Data32IRQ >> 11);
@@ -256,7 +300,7 @@ u32 DSi_SDHost::DataRX(u8* data, u32 len)
 
     u32 f = CurFIFO ^ 1;
     for (u32 i = 0; i < len; i += 2)
-        DataFIFO[f]->Write(*(u16*)&data[i]);
+        DataFIFO[f].Write(*(u16*)&data[i]);
 
     //CurFIFO = f;
     //SetIRQ(24);
@@ -304,9 +348,9 @@ u32 DSi_SDHost::DataTX(u8* data, u32 len)
 
     if (DataMode == 1)
     {
-        if ((DataFIFO32->Level() << 2) < len)
+        if ((DataFIFO32.Level() << 2) < len)
         {
-            if (DataFIFO32->IsEmpty())
+            if (DataFIFO32.IsEmpty())
             {
                 SetIRQ(25);
                 DSi::CheckNDMAs(1, Num ? 0x29 : 0x28);
@@ -316,16 +360,16 @@ u32 DSi_SDHost::DataTX(u8* data, u32 len)
 
         // drain FIFO32 into FIFO16
 
-        if (!DataFIFO[f]->IsEmpty()) printf("VERY BAD!! TRYING TO DRAIN FIFO32 INTO FIFO16 BUT IT CONTAINS SHIT ALREADY\n");
+        if (!DataFIFO[f].IsEmpty()) printf("VERY BAD!! TRYING TO DRAIN FIFO32 INTO FIFO16 BUT IT CONTAINS SHIT ALREADY\n");
         for (;;)
         {
             u32 f = CurFIFO;
-            if ((DataFIFO[f]->Level() << 1) >= BlockLen16) break;
-            if (DataFIFO32->IsEmpty()) break;
+            if ((DataFIFO[f].Level() << 1) >= BlockLen16) break;
+            if (DataFIFO32.IsEmpty()) break;
 
-            u32 val = DataFIFO32->Read();
-            DataFIFO[f]->Write(val & 0xFFFF);
-            DataFIFO[f]->Write(val >> 16);
+            u32 val = DataFIFO32.Read();
+            DataFIFO[f].Write(val & 0xFFFF);
+            DataFIFO[f].Write(val >> 16);
         }
 
         UpdateData32IRQ();
@@ -335,15 +379,15 @@ u32 DSi_SDHost::DataTX(u8* data, u32 len)
     }
     else
     {
-        if ((DataFIFO[f]->Level() << 1) < len)
+        if ((DataFIFO[f].Level() << 1) < len)
         {
-            if (DataFIFO[f]->IsEmpty()) SetIRQ(25);
+            if (DataFIFO[f].IsEmpty()) SetIRQ(25);
             return 0;
         }
     }
 
     for (u32 i = 0; i < len; i += 2)
-        *(u16*)&data[i] = DataFIFO[f]->Read();
+        *(u16*)&data[i] = DataFIFO[f].Read();
 
     CurFIFO ^= 1;
     BlockCountInternal--;
@@ -392,13 +436,13 @@ void DSi_SDHost::CheckTX()
 
     if (DataMode == 1)
     {
-        if ((DataFIFO32->Level() << 2) < BlockLen32)
+        if ((DataFIFO32.Level() << 2) < BlockLen32)
             return;
     }
     else
     {
         u32 f = CurFIFO;
-        if ((DataFIFO[f]->Level() << 1) < BlockLen16)
+        if ((DataFIFO[f].Level() << 1) < BlockLen16)
             return;
     }
 
@@ -435,14 +479,15 @@ u16 DSi_SDHost::Read(u32 addr)
             if (!Num)
             {
                 if (Ports[0]) // basic check of whether the SD card is inserted
-                    ret |= 0x00B0;
-                else
-                    ret |= 0x0008;
+                {
+                    ret |= 0x0020;
+                    if (!Ports[0]->ReadOnly) ret |= 0x0080;
+                }
             }
             else
             {
                 // SDIO wifi is always inserted, I guess
-                ret |= 0x00B0;
+                ret |= 0x00A0;
             }
             return ret;
         }
@@ -472,6 +517,10 @@ u16 DSi_SDHost::Read(u32 addr)
     case 0x102: return 0;
     case 0x104: return BlockLen32;
     case 0x108: return BlockCount32;
+
+    // dunno
+    case 0x106: return 0;
+    case 0x10A: return 0;
     }
 
     printf("unknown %s read %08X @ %08X\n", SD_DESC, addr, NDS::GetPC(1));
@@ -481,7 +530,7 @@ u16 DSi_SDHost::Read(u32 addr)
 u16 DSi_SDHost::ReadFIFO16()
 {
     u32 f = CurFIFO;
-    if (DataFIFO[f]->IsEmpty())
+    if (DataFIFO[f].IsEmpty())
     {
         // TODO
         // on hardware it seems to wrap around. underflow bit is set upon the first 'empty' read.
@@ -489,9 +538,9 @@ u16 DSi_SDHost::ReadFIFO16()
     }
 
     DSi_SDDevice* dev = Ports[PortSelect & 0x1];
-    u16 ret = DataFIFO[f]->Read();
+    u16 ret = DataFIFO[f].Read();
 
-    if (DataFIFO[f]->IsEmpty())
+    if (DataFIFO[f].IsEmpty())
     {
         CheckRX();
     }
@@ -503,16 +552,16 @@ u32 DSi_SDHost::ReadFIFO32()
 {
     if (DataMode != 1) return 0;
 
-    if (DataFIFO32->IsEmpty())
+    if (DataFIFO32.IsEmpty())
     {
         // TODO
         return 0;
     }
 
     DSi_SDDevice* dev = Ports[PortSelect & 0x1];
-    u32 ret = DataFIFO32->Read();
+    u32 ret = DataFIFO32.Read();
 
-    if (DataFIFO32->IsEmpty())
+    if (DataFIFO32.IsEmpty())
     {
         CheckRX();
     }
@@ -628,12 +677,16 @@ void DSi_SDHost::Write(u32 addr, u16 val)
 
     case 0x100:
         Data32IRQ = (val & 0x1802) | (Data32IRQ & 0x0300);
-        if (val & (1<<10)) DataFIFO32->Clear();
+        if (val & (1<<10)) DataFIFO32.Clear();
         DataMode = ((DataCtl >> 1) & 0x1) & ((Data32IRQ >> 1) & 0x1);
         return;
     case 0x102: return;
     case 0x104: BlockLen32 = val & 0x03FF; return;
     case 0x108: BlockCount32 = val; return;
+
+    // dunno
+    case 0x106: return;
+    case 0x10A: return;
     }
 
     printf("unknown %s write %08X %04X\n", SD_DESC, addr, val);
@@ -643,14 +696,14 @@ void DSi_SDHost::WriteFIFO16(u16 val)
 {
     DSi_SDDevice* dev = Ports[PortSelect & 0x1];
     u32 f = CurFIFO;
-    if (DataFIFO[f]->IsFull())
+    if (DataFIFO[f].IsFull())
     {
         // TODO
         printf("!!!! %s FIFO (16) FULL\n", SD_DESC);
         return;
     }
 
-    DataFIFO[f]->Write(val);
+    DataFIFO[f].Write(val);
 
     CheckTX();
 }
@@ -659,14 +712,14 @@ void DSi_SDHost::WriteFIFO32(u32 val)
 {
     if (DataMode != 1) return;
 
-    if (DataFIFO32->IsFull())
+    if (DataFIFO32.IsFull())
     {
         // TODO
         printf("!!!! %s FIFO (32) FULL\n", SD_DESC);
         return;
     }
 
-    DataFIFO32->Write(val);
+    DataFIFO32.Write(val);
 
     CheckTX();
 
@@ -679,21 +732,21 @@ void DSi_SDHost::UpdateFIFO32()
 
     if (DataMode != 1) return;
 
-    if (!DataFIFO32->IsEmpty()) printf("VERY BAD!! TRYING TO DRAIN FIFO16 INTO FIFO32 BUT IT CONTAINS SHIT ALREADY\n");
+    if (!DataFIFO32.IsEmpty()) printf("VERY BAD!! TRYING TO DRAIN FIFO16 INTO FIFO32 BUT IT CONTAINS SHIT ALREADY\n");
     for (;;)
     {
         u32 f = CurFIFO;
-        if ((DataFIFO32->Level() << 2) >= BlockLen32) break;
-        if (DataFIFO[f]->IsEmpty()) break;
+        if ((DataFIFO32.Level() << 2) >= BlockLen32) break;
+        if (DataFIFO[f].IsEmpty()) break;
 
-        u32 val = DataFIFO[f]->Read();
-        val |= (DataFIFO[f]->Read() << 16);
-        DataFIFO32->Write(val);
+        u32 val = DataFIFO[f].Read();
+        val |= (DataFIFO[f].Read() << 16);
+        DataFIFO32.Write(val);
     }
 
     UpdateData32IRQ();
 
-    if ((DataFIFO32->Level() << 2) >= BlockLen32)
+    if ((DataFIFO32.Level() << 2) >= BlockLen32)
     {
         DSi::CheckNDMAs(1, Num ? 0x29 : 0x28);
     }
@@ -704,8 +757,8 @@ void DSi_SDHost::CheckSwapFIFO()
     // check whether we can swap the FIFOs
 
     u32 f = CurFIFO;
-    bool cur_empty = (DataMode == 1) ? DataFIFO32->IsEmpty() : DataFIFO[f]->IsEmpty();
-    if (cur_empty && ((DataFIFO[f^1]->Level() << 1) >= BlockLen16))
+    bool cur_empty = (DataMode == 1) ? DataFIFO32.IsEmpty() : DataFIFO[f].IsEmpty();
+    if (cur_empty && ((DataFIFO[f^1].Level() << 1) >= BlockLen16))
     {
         CurFIFO ^= 1;
     }
@@ -714,29 +767,40 @@ void DSi_SDHost::CheckSwapFIFO()
 
 #define MMC_DESC  (Internal?"NAND":"SDcard")
 
-DSi_MMCStorage::DSi_MMCStorage(DSi_SDHost* host, bool internal, const char* path) : DSi_SDDevice(host)
+DSi_MMCStorage::DSi_MMCStorage(DSi_SDHost* host, bool internal, std::string filename)
+    : DSi_SDDevice(host)
 {
     Internal = internal;
-    strncpy(FilePath, path, 1023); FilePath[1023] = '\0';
+    File = Platform::OpenLocalFile(filename, "r+b");
 
-    File = Platform::OpenLocalFile(path, "r+b");
-    if (!File)
-    {
-        if (internal)
-        {
-            // TODO: proper failure
-            printf("!! MMC file %s does not exist\n", path);
-        }
-        else
-        {
-            File = Platform::OpenLocalFile(path, "w+b");
-        }
-    }
+    SD = nullptr;
+
+    ReadOnly = false;
+}
+
+DSi_MMCStorage::DSi_MMCStorage(DSi_SDHost* host, bool internal, std::string filename, u64 size, bool readonly, std::string sourcedir)
+    : DSi_SDDevice(host)
+{
+    Internal = internal;
+    File = nullptr;
+
+    SD = new FATStorage(filename, size, readonly, sourcedir);
+    SD->Open();
+
+    ReadOnly = readonly;
 }
 
 DSi_MMCStorage::~DSi_MMCStorage()
 {
-    if (File) fclose(File);
+    if (SD)
+    {
+        SD->Close();
+        delete SD;
+    }
+    if (File)
+    {
+        fclose(File);
+    }
 }
 
 void DSi_MMCStorage::Reset()
@@ -762,6 +826,26 @@ void DSi_MMCStorage::Reset()
     BlockSize = 0;
     RWAddress = 0;
     RWCommand = 0;
+}
+
+void DSi_MMCStorage::DoSavestate(Savestate* file)
+{
+    file->Section(Internal ? "NAND" : "SDCR");
+
+    file->VarArray(CID, 16);
+    file->VarArray(CSD, 16);
+
+    file->Var32(&CSR);
+    file->Var32(&OCR);
+    file->Var32(&RCA);
+    file->VarArray(SCR, 8);
+    file->VarArray(SSR, 64);
+
+    file->Var32(&BlockSize);
+    file->Var64(&RWAddress);
+    file->Var32(&RWCommand);
+
+    // TODO: what about the file contents?
 }
 
 void DSi_MMCStorage::SendCMD(u8 cmd, u32 param)
@@ -871,8 +955,7 @@ void DSi_MMCStorage::SendCMD(u8 cmd, u32 param)
         }
         RWCommand = 18;
         Host->SendResponse(CSR, true);
-        ReadBlock(RWAddress);
-        RWAddress += BlockSize;
+        RWAddress += ReadBlock(RWAddress);
         SetState(0x05);
         return;
 
@@ -886,8 +969,7 @@ void DSi_MMCStorage::SendCMD(u8 cmd, u32 param)
         }
         RWCommand = 25;
         Host->SendResponse(CSR, true);
-        WriteBlock(RWAddress);
-        RWAddress += BlockSize;
+        RWAddress += WriteBlock(RWAddress);
         SetState(0x04);
         return;
 
@@ -965,13 +1047,17 @@ u32 DSi_MMCStorage::ReadBlock(u64 addr)
     len = Host->GetTransferrableLen(len);
 
     u8 data[0x200];
-    if (File)
+    if (SD)
+    {
+        SD->ReadSectors((u32)(addr >> 9), 1, data);
+    }
+    else if (File)
     {
         fseek(File, addr, SEEK_SET);
-        fread(data, 1, len, File);
+        fread(&data[addr & 0x1FF], 1, len, File);
     }
 
-    return Host->DataRX(data, len);
+    return Host->DataRX(&data[addr & 0x1FF], len);
 }
 
 u32 DSi_MMCStorage::WriteBlock(u64 addr)
@@ -980,12 +1066,26 @@ u32 DSi_MMCStorage::WriteBlock(u64 addr)
     len = Host->GetTransferrableLen(len);
 
     u8 data[0x200];
-    if (len = Host->DataTX(data, len))
+    if (len < 0x200)
     {
-        if (File)
+        if (SD)
         {
-            fseek(File, addr, SEEK_SET);
-            fwrite(data, 1, len, File);
+            SD->ReadSectors((u32)(addr >> 9), 1, data);
+        }
+    }
+    if ((len = Host->DataTX(&data[addr & 0x1FF], len)))
+    {
+        if (!ReadOnly)
+        {
+            if (SD)
+            {
+                SD->WriteSectors((u32)(addr >> 9), 1, data);
+            }
+            else if (File)
+            {
+                fseek(File, addr, SEEK_SET);
+                fwrite(&data[addr & 0x1FF], 1, len, File);
+            }
         }
     }
 

@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -20,6 +20,7 @@
 #define DMA_H
 
 #include "types.h"
+#include "Savestate.h"
 
 class DMA
 {
@@ -33,6 +34,11 @@ public:
 
     void WriteCnt(u32 val);
     void Start();
+
+    u32 UnitTimings9_16(bool burststart);
+    u32 UnitTimings9_32(bool burststart);
+    u32 UnitTimings7_16(bool burststart);
+    u32 UnitTimings7_32(bool burststart);
 
     template <int ConsoleType>
     void Run();
@@ -78,8 +84,8 @@ private:
     u32 CurDstAddr;
     u32 RemCount;
     u32 IterCount;
-    u32 SrcAddrInc;
-    u32 DstAddrInc;
+    s32 SrcAddrInc;
+    s32 DstAddrInc;
     u32 CountMask;
 
     u32 Running;
@@ -89,6 +95,9 @@ private:
     bool Stall;
 
     bool IsGXFIFODMA;
+
+    u32 MRAMBurstCount;
+    const u8* MRAMBurstTable;
 };
 
 #endif

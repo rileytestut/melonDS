@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -18,6 +18,8 @@
 
 #ifndef NDS_H
 #define NDS_H
+
+#include <string>
 
 #include "Savestate.h"
 #include "types.h"
@@ -48,19 +50,17 @@ enum
     Event_DSi_NWifi,
     Event_DSi_CamIRQ,
     Event_DSi_CamTransfer,
-
-    Event_DSi_RAMSizeChange,
+    Event_DSi_DSP,
 
     Event_MAX
 };
 
-typedef struct
+struct SchedEvent
 {
     void (*Func)(u32 param);
     u64 Timestamp;
     u32 Param;
-
-} SchedEvent;
+};
 
 enum
 {
@@ -83,7 +83,7 @@ enum
     IRQ_IPCSync,
     IRQ_IPCSendDone,
     IRQ_IPCRecv,
-    IRQ_CartSendDone, // TODO: less misleading name
+    IRQ_CartXferDone,
     IRQ_CartIREQMC,   // IRQ triggered by game cart (example: Pokémon Typing Adventure, BT controller)
     IRQ_GXFIFO,
     IRQ_LidOpen,
@@ -121,29 +121,69 @@ enum
     IRQ2_DSi_MicExt
 };
 
-typedef struct
+struct Timer
 {
     u16 Reload;
     u16 Cnt;
     u32 Counter;
     u32 CycleShift;
+};
 
-} Timer;
+enum
+{
+    Mem9_ITCM       = 0x00000001,
+    Mem9_DTCM       = 0x00000002,
+    Mem9_BIOS       = 0x00000004,
+    Mem9_MainRAM    = 0x00000008,
+    Mem9_WRAM       = 0x00000010,
+    Mem9_IO         = 0x00000020,
+    Mem9_Pal        = 0x00000040,
+    Mem9_OAM        = 0x00000080,
+    Mem9_VRAM       = 0x00000100,
+    Mem9_GBAROM     = 0x00020000,
+    Mem9_GBARAM     = 0x00040000,
 
-typedef struct
+    Mem7_BIOS       = 0x00000001,
+    Mem7_MainRAM    = 0x00000002,
+    Mem7_WRAM       = 0x00000004,
+    Mem7_IO         = 0x00000008,
+    Mem7_Wifi0      = 0x00000010,
+    Mem7_Wifi1      = 0x00000020,
+    Mem7_VRAM       = 0x00000040,
+    Mem7_GBAROM     = 0x00000100,
+    Mem7_GBARAM     = 0x00000200,
+
+    // TODO: add DSi regions!
+};
+
+struct MemRegion
 {
     u8* Mem;
     u32 Mask;
+};
 
-} MemRegion;
+// supported GBA slot addon types
+enum
+{
+    GBAAddon_RAMExpansion = 1,
+};
 
+#ifdef JIT_ENABLED
+extern bool EnableJIT;
+#endif
 extern int ConsoleType;
 extern int CurCPU;
 
 extern bool SkipFrame;
 
-extern u8 ARM9MemTimings[0x40000][4];
+extern u8 ARM9MemTimings[0x40000][8];
+extern u32 ARM9Regions[0x40000];
 extern u8 ARM7MemTimings[0x20000][4];
+extern u32 ARM7Regions[0x20000];
+
+extern u32 NumFrames;
+extern u32 NumLagFrames;
+extern bool LagFrameFlag;
 
 extern u64 ARM9Timestamp, ARM9Target;
 extern u64 ARM7Timestamp, ARM7Target;
@@ -187,21 +227,30 @@ extern u8* ARM7WRAM;
 bool Init();
 void DeInit();
 void Reset();
+void Start();
 void Stop();
 
 bool DoSavestate(Savestate* file);
 
-void SetARM9RegionTimings(u32 addrstart, u32 addrend, int buswidth, int nonseq, int seq);
-void SetARM7RegionTimings(u32 addrstart, u32 addrend, int buswidth, int nonseq, int seq);
+void SetARM9RegionTimings(u32 addrstart, u32 addrend, u32 region, int buswidth, int nonseq, int seq);
+void SetARM7RegionTimings(u32 addrstart, u32 addrend, u32 region, int buswidth, int nonseq, int seq);
 
 // 0=DS  1=DSi
 void SetConsoleType(int type);
 
-bool LoadROM(const char* path, const char* sram, bool direct);
-bool LoadGBAROM(const char* path, const char* sram);
 void LoadBIOS();
-void SetupDirectBoot();
-void RelocateSave(const char* path, bool write);
+
+bool LoadCart(const u8* romdata, u32 romlen, const u8* savedata, u32 savelen);
+void LoadSave(const u8* savedata, u32 savelen);
+void EjectCart();
+bool CartInserted();
+
+bool NeedsDirectBoot();
+void SetupDirectBoot(std::string romname);
+
+bool LoadGBACart(const u8* romdata, u32 romlen, const u8* savedata, u32 savelen);
+void LoadGBAAddon(int type);
+void EjectGBACart();
 
 u32 RunFrame();
 
@@ -215,11 +264,11 @@ void SetKeyMask(u32 mask);
 bool IsLidClosed();
 void SetLidClosed(bool closed);
 
+void CamInputFrame(int cam, u32* data, int width, int height, bool rgb);
 void MicInputFrame(s16* data, int samples);
 
-int ImportSRAM(u8* data, u32 length);
-
 void ScheduleEvent(u32 id, bool periodic, s32 delay, void (*func)(u32), u32 param);
+void ScheduleEvent(u32 id, u64 timestamp, void (*func)(u32), u32 param);
 void CancelEvent(u32 id);
 
 void debug(u32 p);

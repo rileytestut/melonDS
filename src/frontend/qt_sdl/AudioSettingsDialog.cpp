@@ -1,5 +1,5 @@
 /*
-    Copyright 2016-2020 Arisotura
+    Copyright 2016-2022 melonDS team
 
     This file is part of melonDS.
 
@@ -22,7 +22,6 @@
 #include "types.h"
 #include "Platform.h"
 #include "Config.h"
-#include "PlatformConfig.h"
 
 #include "AudioSettingsDialog.h"
 #include "ui_AudioSettingsDialog.h"
@@ -30,7 +29,7 @@
 
 AudioSettingsDialog* AudioSettingsDialog::currentDlg = nullptr;
 
-extern char* EmuDirectory;
+extern std::string EmuDirectory;
 
 
 AudioSettingsDialog::AudioSettingsDialog(QWidget* parent) : QDialog(parent), ui(new Ui::AudioSettingsDialog)
@@ -38,7 +37,20 @@ AudioSettingsDialog::AudioSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     ui->setupUi(this);
     setAttribute(Qt::WA_DeleteOnClose);
 
+    oldInterp = Config::AudioInterp;
+    oldBitrate = Config::AudioBitrate;
     oldVolume = Config::AudioVolume;
+
+    ui->cbInterpolation->addItem("None");
+    ui->cbInterpolation->addItem("Linear");
+    ui->cbInterpolation->addItem("Cosine");
+    ui->cbInterpolation->addItem("Cubic");
+    ui->cbInterpolation->setCurrentIndex(Config::AudioInterp);
+
+    ui->cbBitrate->addItem("Automatic");
+    ui->cbBitrate->addItem("10-bit");
+    ui->cbBitrate->addItem("16-bit");
+    ui->cbBitrate->setCurrentIndex(Config::AudioBitrate);
 
     ui->slVolume->setValue(Config::AudioVolume);
 
@@ -50,11 +62,25 @@ AudioSettingsDialog::AudioSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     connect(grpMicMode, SIGNAL(buttonClicked(int)), this, SLOT(onChangeMicMode(int)));
     grpMicMode->button(Config::MicInputType)->setChecked(true);
 
-    ui->txtMicWavPath->setText(Config::MicWavPath);
+    ui->txtMicWavPath->setText(QString::fromStdString(Config::MicWavPath));
 
     bool iswav = (Config::MicInputType == 3);
     ui->txtMicWavPath->setEnabled(iswav);
     ui->btnMicWavBrowse->setEnabled(iswav);
+
+    int inst = Platform::InstanceID();
+    if (inst > 0)
+    {
+        ui->lblInstanceNum->setText(QString("Configuring settings for instance %1").arg(inst+1));
+        ui->cbInterpolation->setEnabled(false);
+        ui->cbBitrate->setEnabled(false);
+        for (QAbstractButton* btn : grpMicMode->buttons())
+            btn->setEnabled(false);
+        ui->txtMicWavPath->setEnabled(false);
+        ui->btnMicWavBrowse->setEnabled(false);
+    }
+    else
+        ui->lblInstanceNum->hide();
 }
 
 AudioSettingsDialog::~AudioSettingsDialog()
@@ -65,7 +91,7 @@ AudioSettingsDialog::~AudioSettingsDialog()
 void AudioSettingsDialog::on_AudioSettingsDialog_accepted()
 {
     Config::MicInputType = grpMicMode->checkedId();
-    strncpy(Config::MicWavPath, ui->txtMicWavPath->text().toStdString().c_str(), 1023); Config::MicWavPath[1023] = '\0';
+    Config::MicWavPath = ui->txtMicWavPath->text().toStdString();
     Config::Save();
 
     closeDlg();
@@ -73,9 +99,31 @@ void AudioSettingsDialog::on_AudioSettingsDialog_accepted()
 
 void AudioSettingsDialog::on_AudioSettingsDialog_rejected()
 {
+    Config::AudioInterp = oldInterp;
+    Config::AudioBitrate = oldBitrate;
     Config::AudioVolume = oldVolume;
 
     closeDlg();
+}
+
+void AudioSettingsDialog::on_cbBitrate_currentIndexChanged(int idx)
+{
+    // prevent a spurious change
+    if (ui->cbBitrate->count() < 3) return;
+
+    Config::AudioBitrate = ui->cbBitrate->currentIndex();
+
+    emit updateAudioSettings();
+}
+
+void AudioSettingsDialog::on_cbInterpolation_currentIndexChanged(int idx)
+{
+    // prevent a spurious change
+    if (ui->cbInterpolation->count() < 4) return;
+
+    Config::AudioInterp = ui->cbInterpolation->currentIndex();
+
+    emit updateAudioSettings();
 }
 
 void AudioSettingsDialog::on_slVolume_valueChanged(int val)
@@ -94,7 +142,7 @@ void AudioSettingsDialog::on_btnMicWavBrowse_clicked()
 {
     QString file = QFileDialog::getOpenFileName(this,
                                                 "Select WAV file...",
-                                                EmuDirectory,
+                                                QString::fromStdString(EmuDirectory),
                                                 "WAV files (*.wav);;Any file (*.*)");
 
     if (file.isEmpty()) return;
