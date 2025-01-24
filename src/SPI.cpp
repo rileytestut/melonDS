@@ -48,6 +48,8 @@ u8 Data;
 u8 StatusReg;
 u32 Addr;
 
+std::array<u8, 4> DNS = {0, 0, 0, 0};
+
 
 u16 CRC16(u8* data, u32 len, u32 start)
 {
@@ -230,6 +232,14 @@ void LoadDefaultFirmware()
 
         strcpy((char*)&Firmware[apdata+0x40], "melonAP");
         if (NDS::ConsoleType == 1) *(u16*)&Firmware[apdata+0xEA] = 1400;
+        
+        std::array<u8, 4> nullDNS = {0,0,0,0};
+        if (DNS != nullDNS)
+        {
+            memcpy(&Firmware[apdata+0xC8], DNS.data(), 4); // 0xC8 = Primary DNS
+            memcpy(&Firmware[apdata+0xCC], DNS.data(), 4); // 0xCC = Secondary DNS
+        }
+        
         Firmware[apdata+0xEF] = 0x01;
         *(u16*)&Firmware[apdata+0xFE] = CRC16(&Firmware[apdata], 0xFE, 0x0000);
 
@@ -265,6 +275,7 @@ void LoadFirmwareFromFile(FILE* f, bool makecopy)
     fseek(f, 0, SEEK_END);
 
     FirmwareLength = FixFirmwareLength((u32)ftell(f));
+    FirmwareMask = FirmwareLength - 1;
 
     Firmware = new u8[FirmwareLength];
 
@@ -292,6 +303,23 @@ void LoadFirmwareFromFile(FILE* f, bool makecopy)
     else
     {
         fclose(bf);
+    }
+    
+    std::array<u8, 4> nullDNS = {0,0,0,0};
+    if (DNS != nullDNS)
+    {
+        u32 userdata = 0x7FE00 & FirmwareMask;
+        u32 apdata = userdata - 0x400;
+        memset(&Firmware[apdata], 0, 0xF0); // Erase up until (but not including) WFC User ID
+
+        strcpy((char*)&Firmware[apdata+0x40], "melonAP");
+        if (NDS::ConsoleType == 1) *(u16*)&Firmware[apdata+0xEA] = 1400;
+        
+        memcpy(&Firmware[apdata+0xC8], DNS.data(), 4); // 0xC8 = Primary DNS
+        memcpy(&Firmware[apdata+0xCC], DNS.data(), 4); // 0xCC = Secondary DNS
+        Firmware[apdata+0xEF] = 0x01; // 0xEF = Configured?
+        
+        *(u16*)&Firmware[apdata+0xFE] = CRC16(&Firmware[apdata], 0xFE, 0x0000);
     }
 }
 
