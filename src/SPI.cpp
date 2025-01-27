@@ -49,6 +49,8 @@ u8 StatusReg;
 u32 Addr;
 
 std::array<u8, 4> DNS = {0, 0, 0, 0};
+int64_t wfcID = 0;
+int64_t wfcFlags = 0;
 
 
 u16 CRC16(u8* data, u32 len, u32 start)
@@ -241,6 +243,13 @@ void LoadDefaultFirmware()
         }
         
         Firmware[apdata+0xEF] = 0x01;
+        
+        if (wfcID != 0)
+        {
+            memcpy(&Firmware[apdata + 0xF0], &wfcID, 6);
+            memcpy(&Firmware[apdata + 0xF6], &wfcFlags, 8);
+        }
+        
         *(u16*)&Firmware[apdata+0xFE] = CRC16(&Firmware[apdata], 0xFE, 0x0000);
 
         apdata += 0x100;
